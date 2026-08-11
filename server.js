@@ -430,7 +430,7 @@ app.post('/tools/reverseip', async (req, res) => {
 });
 
 // ============================================================
-// ENDPOINT ROOT (RAPI)
+// ENDPOINT ROOT – RAPI DAN BENAR
 // ============================================================
 app.get('/', (req, res) => {
     res.json({
