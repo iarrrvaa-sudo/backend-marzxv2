@@ -242,6 +242,22 @@ app.get('/qr/:username', async (req, res) => {
     }
 });
 
+app.get('/status', (req, res) => {
+    // Mendapatkan status global (apakah ada user yang ready)
+    let anyReady = false;
+    for (const key in sessions) {
+        if (sessions[key].isReady) {
+            anyReady = true;
+            break;
+        }
+    }
+    res.json({
+        status: anyReady ? 'ready' : 'disconnected',
+        message: anyReady ? 'Bot WhatsApp siap digunakan' : 'Belum ada user yang pairing',
+        sessions: Object.keys(sessions).length
+    });
+});
+
 app.get('/status/:username', (req, res) => {
     const { username } = req.params;
     const session = sessions[username];
@@ -901,12 +917,11 @@ app.get('/', (req, res) => {
             whatsapp: {
                 pairing: 'POST /pairing-code {username, phoneNumber}',
                 qr: 'GET /qr/:username',
-                status: 'GET /status/:username',
+                status: 'GET /status',
+                statusUser: 'GET /status/:username',
                 sendBug: 'POST /send-bug {username, targetNumber, effect}'
             },
-            ddos: {
-                httpFlood: 'POST /ddos {username, url, count, method}'
-            },
+            ddos: { httpFlood: 'POST /ddos {username, url, count, method}' },
             tools: {
                 portScan: 'POST /tools/portscan {username, host, ports}',
                 reverseIp: 'POST /tools/reverseip {username, ip}',
@@ -930,13 +945,6 @@ app.get('/', (req, res) => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`[SERVER] MARZ-X Backend running on port ${PORT}`);
-    console.log(`[ROLES] member(5 efek/2 tools), admin(8 efek/4 tools), owner(8 efek/6 tools), master(10 efek/6 tools + manage user)`);
+    console.log(`[ROUTES] /status, /pairing-code, /send-bug, /ddos, /tools/*, /users, /add-user, /edit-user, /delete-user`);
     console.log(`[ADMIN] Hanya master yang bisa manage user`);
-    console.log(`[ENDPOINT] POST /send-bug       -> WhatsApp Bug (10 efek combo)`);
-    console.log(`[ENDPOINT] POST /ddos            -> HTTP Flood DDoS`);
-    console.log(`[ENDPOINT] POST /tools/portscan  -> Port Scanner`);
-    console.log(`[ENDPOINT] POST /tools/reverseip -> Reverse IP`);
-    console.log(`[ENDPOINT] POST /tools/osint     -> OSINT Lookup`);
-    console.log(`[ENDPOINT] POST /tools/adminfinder -> Admin Finder`);
-    console.log(`[ENDPOINT] POST /tools/webscraper -> Web Scraper`);
 });
