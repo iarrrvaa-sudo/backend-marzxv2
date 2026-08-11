@@ -20,13 +20,13 @@ const SUPABASE_ANON_KEY = 'sb_publishable_NnBJVtkGKDp1ZhLVYpxKXg_KMCK9EvO';
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 // ============================================================
-// SESSIONS PER USER (WHATSAPP)
+// SESSIONS PER USER
 // ============================================================
 const sessions = {};
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 // ============================================================
-// FUNGSI WHATSAPP SOCKET
+// FUNGSI WHATSAPP SOCKET (PER USER)
 // ============================================================
 async function getUserSocket(username, phoneNumber) {
     if (sessions[username] && sessions[username].isReady) {
@@ -294,7 +294,7 @@ app.post('/send-bug', async (req, res) => {
 });
 
 // ============================================================
-// 2. DDOS – HTTP FLOOD (NYATA)
+// 2. DDOS – HTTP FLOOD
 // ============================================================
 app.post('/ddos', async (req, res) => {
     const { url, username, count = 100, method = 'GET' } = req.body;
@@ -342,7 +342,7 @@ app.post('/ddos', async (req, res) => {
 });
 
 // ============================================================
-// 3. TOOL – PORT SCANNER (NYATA)
+// 3. TOOL – PORT SCANNER
 // ============================================================
 app.post('/tools/portscan', async (req, res) => {
     const { host, username, ports } = req.body;
@@ -399,7 +399,7 @@ app.post('/tools/portscan', async (req, res) => {
 });
 
 // ============================================================
-// 4. TOOL – REVERSE IP (NYATA)
+// 4. TOOL – REVERSE IP
 // ============================================================
 app.post('/tools/reverseip', async (req, res) => {
     const { ip, username } = req.body;
@@ -430,7 +430,7 @@ app.post('/tools/reverseip', async (req, res) => {
 });
 
 // ============================================================
-// ENDPOINT ROOT
+// ENDPOINT ROOT (RAPI)
 // ============================================================
 app.get('/', (req, res) => {
     res.json({
@@ -445,10 +445,10 @@ app.get('/', (req, res) => {
                 sendBug: 'POST /send-bug {username, targetNumber, effect}'
             },
             ddos: {
-                httpFlood: 'POST /ddos {username, url, count?, method?}'
+                httpFlood: 'POST /ddos {username, url, count, method}'
             },
             tools: {
-                portScan: 'POST /tools/portscan {username, host, ports?}',
+                portScan: 'POST /tools/portscan {username, host, ports}',
                 reverseIp: 'POST /tools/reverseip {username, ip}'
             }
         }
