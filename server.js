@@ -9,17 +9,28 @@ const dns = require('dns');
 const path = require('path');
 const fs = require('fs');
 const cors = require('cors');
+const WebSocket = require('ws'); // <-- TAMBAHKAN INI
 
 const app = express();
 app.use(express.json());
 app.use(cors());
 
 // ============================================================
-// KONFIGURASI SUPABASE
+// KONFIGURASI SUPABASE (DENGAN KONFIGURASI REALTIME)
 // ============================================================
 const SUPABASE_URL = 'https://nxihknuzzmqbdcazikln.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_NnBJVtkGKDp1ZhLVYpxKXg_KMCK9EvO';
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// Konfigurasi Supabase Client dengan WebSocket
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  realtime: {
+    params: {
+      eventsPerSecond: 10
+    }
+  }
+});
+
+console.log('✅ Supabase client initialized with WebSocket support');
 
 // ============================================================
 // SESSIONS PER USER
