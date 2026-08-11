@@ -1,21 +1,35 @@
 {
-  "name": "marzx-backend",
-  "version": "2.1.0",
-  "description": "MARZ-X Backend – WhatsApp Bug + DDoS + Tools (Multi-User)",
-  "main": "server.js",
-  "scripts": {
-    "start": "node server.js"
+  "name": "MARZ-X Backend",
+  "version": "3.0.0",
+  "status": "online",
+  "roles": {
+    "member": "5 efek bug, 2 tools (ddos, portscan)",
+    "admin": "8 efek bug, 4 tools (+ osint, adminfinder)",
+    "owner": "8 efek bug, 6 tools (semua)",
+    "master": "10 efek bug, 6 tools (semua) + manage user"
   },
-  "dependencies": {
-    "express": "^4.18.2",
-    "@whiskeysockets/baileys": "^6.7.9",
-    "qrcode": "^1.5.3",
-    "@supabase/supabase-js": "^2.39.0",
-    "@hapi/boom": "^10.0.1",
-    "axios": "^1.6.2",
-    "net": "^1.0.2"
-  },
-  "engines": {
-    "node": ">=18.0.0"
+  "endpoints": {
+    "whatsapp": {
+      "pairing": "POST /pairing-code {username, phoneNumber}",
+      "qr": "GET /qr/:username",
+      "status": "GET /status/:username",
+      "sendBug": "POST /send-bug {username, targetNumber, effect}"
+    },
+    "ddos": {
+      "httpFlood": "POST /ddos {username, url, count, method}"
+    },
+    "tools": {
+      "portScan": "POST /tools/portscan {username, host, ports}",
+      "reverseIp": "POST /tools/reverseip {username, ip}",
+      "osint": "POST /tools/osint {username, target}",
+      "adminFinder": "POST /tools/adminfinder {username, url}",
+      "webScraper": "POST /tools/webscraper {username, url}"
+    },
+    "admin": {
+      "users": "GET /users?username=master (only master)",
+      "addUser": "POST /add-user (only master)",
+      "editUser": "PUT /edit-user/:username (only master)",
+      "deleteUser": "DELETE /delete-user/:username (only master)"
+    }
   }
 }
