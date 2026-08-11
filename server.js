@@ -1,5 +1,5 @@
 const express = require('express');
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, makeInMemoryStore } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const QRCode = require('qrcode');
 const { createClient } = require('@supabase/supabase-js');
 const { Boom } = require('@hapi/boom');
@@ -40,7 +40,7 @@ const sessions = {};
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 // ============================================================
-// FUNGSI WHATSAPP SOCKET (PER USER)
+// FUNGSI WHATSAPP SOCKET (PER USER) – tanpa makeInMemoryStore
 // ============================================================
 async function getUserSocket(username, phoneNumber) {
     if (sessions[username] && sessions[username].isReady) {
@@ -61,8 +61,7 @@ async function getUserSocket(username, phoneNumber) {
         browser: ['MARZ-X Bot', 'Chrome', '1.0.0']
     });
 
-    const store = makeInMemoryStore({});
-    store.bind(sock.ev);
+    // HAPUS makeInMemoryStore – tidak digunakan
 
     let pairingCode = null;
     let qrString = null;
@@ -248,7 +247,6 @@ app.post('/pairing-code', async (req, res) => {
         return res.status(400).json({ error: 'username dan phoneNumber wajib diisi' });
     }
 
-    // Bersihkan nomor
     const cleanNumber = phoneNumber.replace(/[^0-9]/g, '');
     if (!cleanNumber.startsWith('62') && !cleanNumber.startsWith('8')) {
         return res.status(400).json({ error: 'Nomor harus diawali 62 atau 8 (contoh: 6281234567890)' });
@@ -257,13 +255,11 @@ app.post('/pairing-code', async (req, res) => {
     const finalNumber = cleanNumber.startsWith('62') ? cleanNumber : '62' + cleanNumber;
     console.log(`[PAIRING] Nomor diformat: ${finalNumber}`);
 
-    // Jika sudah terhubung
     if (sessions[username] && sessions[username].isReady) {
         return res.json({ status: 'ready', message: 'Sudah terhubung', code: null });
     }
 
     try {
-        // Panggil fungsi socket dengan timeout 20 detik
         const socketPromise = getUserSocket(username, finalNumber);
         const timeoutPromise = new Promise((_, reject) => 
             setTimeout(() => reject(new Error('Timeout 20 detik')), 20000)
@@ -272,7 +268,6 @@ app.post('/pairing-code', async (req, res) => {
         await Promise.race([socketPromise, timeoutPromise]);
         console.log(`[PAIRING] Socket berhasil dibuat untuk ${username}`);
 
-        // Tunggu kode pairing (maks 15 detik)
         let attempts = 0;
         const maxAttempts = 30;
         while (attempts < maxAttempts) {
@@ -290,7 +285,6 @@ app.post('/pairing-code', async (req, res) => {
             attempts++;
         }
 
-        // Jika gagal dapat kode
         console.error(`[PAIRING] Gagal mendapatkan kode untuk ${username}`);
         const session = sessions[username];
         if (session && session.qrString) {
@@ -366,7 +360,7 @@ app.get('/status/:username', (req, res) => {
 });
 
 // ============================================================
-// 4. SEND BUG – LENGKAP (10 EFEK)
+// 4. SEND BUG – LENGKAP (10 EFEK) – SAMA SEPERTI SEBELUMNYA
 // ============================================================
 app.post('/send-bug', async (req, res) => {
     const { targetNumber, effect, username, count = 0 } = req.body;
