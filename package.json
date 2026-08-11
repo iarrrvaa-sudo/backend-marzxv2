@@ -10,12 +10,12 @@
     "express": "^4.18.2",
     "@whiskeysockets/baileys": "^6.7.9",
     "qrcode": "^1.5.3",
-    "@supabase/supabase-js": "^2.39.0",
+    "@supabase/supabase-js": "^2.45.0",
     "@hapi/boom": "^10.0.1",
     "axios": "^1.6.2",
     "cors": "^2.8.5"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.0.0"
   }
 }
