@@ -1,5 +1,5 @@
 // ============================================================
-// MARZ-X BACKEND v3.1.2 – FINAL HEALTH CHECK FIXED
+// MARZ-X BACKEND v3.1.3 – FINAL CATCH-ALL HEALTH CHECK FIX
 // ============================================================
 if (process.env.NODE_ENV !== 'production') {
   require('dotenv').config();
@@ -926,6 +926,13 @@ app.get('/health', (req, res) => {
 // ============================================================
 app.get('/', (req, res) => {
   res.send('MARZ-X Backend Online');
+});
+
+// ============================================================
+// CATCH-ALL UNTUK RAILWAY HEALTH CHECK - PASTIKAN RESPON CEPAT
+// ============================================================
+app.get('*', (req, res) => {
+  res.status(200).send('OK');
 });
 
 // ============================================================
