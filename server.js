@@ -1,5 +1,5 @@
 // ============================================================
-// MARZ-X BACKEND v3.1.1 – FINAL FIXED BY ZEROV1
+// MARZ-X BACKEND v3.1.2 – FINAL HEALTH CHECK FIXED
 // ============================================================
 if (process.env.NODE_ENV !== 'production') {
   require('dotenv').config();
@@ -21,6 +21,14 @@ const bcrypt = require('bcryptjs');
 
 const app = express();
 app.use(express.json());
+
+// ============================================================
+// LOGGER MIDDLEWARE (BANTU DEBUG)
+// ============================================================
+app.use((req, res, next) => {
+  console.log(`[REQUEST] ${req.method} ${req.url}`);
+  next();
+});
 
 // ============================================================
 // CORS AMAN (ganti dengan domain frontend lu)
@@ -180,7 +188,6 @@ async function getUserSocket(username, phoneNumber) {
         console.log(`[PAIRING] ${username} -> KODE: ${code}`);
       } catch (err) {
         console.error(`[PAIRING ERROR] ${username}:`, err.message);
-        // Jangan panggil getUserSocket lagi di sini – biar user coba ulang via endpoint
       }
     } else {
       console.log(`[AUTH] ${username} sudah memiliki kredensial.`);
@@ -908,15 +915,17 @@ app.delete('/delete-user/:username', verifyToken, checkMaster, async (req, res) 
 });
 
 // ============================================================
-// ROOT
+// ROUTE UNTUK HEALTH CHECK (RAILWAY)
+// ============================================================
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// ============================================================
+// ROOT – PAKE PLAIN TEXT BIAR CEPAT
 // ============================================================
 app.get('/', (req, res) => {
-  res.json({
-    name: 'MARZ-X Backend',
-    version: '3.1.1 FINAL',
-    status: 'online',
-    note: 'Gunakan /login untuk mendapatkan JWT token, lalu kirim di header Authorization: Bearer <token>'
-  });
+  res.send('MARZ-X Backend Online');
 });
 
 // ============================================================
@@ -925,5 +934,5 @@ app.get('/', (req, res) => {
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`[SERVER] MARZ-X Backend running on port ${PORT}`);
   console.log(`[NODE] ${process.version}`);
-  console.log(`[AUTH] JWT + bcrypt active`);
+  console.log(`[AUTH] JWT + bcryptjs active`);
 });
