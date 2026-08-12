@@ -6,7 +6,7 @@ const express = require('express');
 const app = express();
 
 // ============================================================
-// ROUTE UTAMA (BIAR RAILWAY CEPAT RESPON)
+// ROUTE UTAMA
 // ============================================================
 app.get('/', (req, res) => res.send('MARZ-X Backend Online'));
 app.get('/health', (req, res) => res.status(200).json({ status: 'ok' }));
@@ -37,7 +37,7 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 
 // ============================================================
-// HARDCODE SUPABASE (atau pake env kalo mau)
+// HARDCODE SUPABASE
 // ============================================================
 const SUPABASE_URL = 'https://nxihknuzzmqbdcazikln.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_NnBJVtkGKDp1ZhLVYpxKXg_KMCK9EvO';
@@ -90,7 +90,6 @@ app.post('/login', async (req, res) => {
 // FUNGSI WHATSAPP SOCKET – VERSI STABIL DENGAN RETRY
 // ============================================================
 async function getUserSocket(username, phoneNumber) {
-  // Hapus session lama
   const authFolder = path.join(__dirname, `auth_${username}`);
   if (fs.existsSync(authFolder)) {
     fs.rmSync(authFolder, { recursive: true, force: true });
@@ -308,10 +307,8 @@ app.post('/send-bug', verifyToken, async (req, res) => {
 });
 
 // ============================================================
-// TOOLS ENDPOINTS (LENGKAP)
+// TOOLS ENDPOINTS
 // ============================================================
-
-// DDOS
 app.post('/ddos', verifyToken, async (req, res) => {
   const { url, count = 100, method = 'GET' } = req.body;
   const username = req.user.username;
@@ -335,7 +332,6 @@ app.post('/ddos', verifyToken, async (req, res) => {
   }
 });
 
-// Port Scanner
 app.post('/tools/portscan', verifyToken, async (req, res) => {
   const { host, ports } = req.body;
   const username = req.user.username;
@@ -360,7 +356,6 @@ app.post('/tools/portscan', verifyToken, async (req, res) => {
   res.json({ success: true, host, results, openPorts: openPorts.map(r=>r.port), message: `✅ ${openPorts.length} port terbuka` });
 });
 
-// Reverse IP
 app.post('/tools/reverseip', verifyToken, async (req, res) => {
   const { ip } = req.body;
   const username = req.user.username;
@@ -374,7 +369,6 @@ app.post('/tools/reverseip', verifyToken, async (req, res) => {
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-// OSINT Lookup
 app.post('/tools/osint', verifyToken, async (req, res) => {
   const { target } = req.body;
   const username = req.user.username;
@@ -396,7 +390,6 @@ app.post('/tools/osint', verifyToken, async (req, res) => {
   res.json({ success: true, target, result });
 });
 
-// Admin Finder
 app.post('/tools/adminfinder', verifyToken, async (req, res) => {
   const { url } = req.body;
   const username = req.user.username;
@@ -419,10 +412,110 @@ app.post('/tools/adminfinder', verifyToken, async (req, res) => {
   res.json({ success: true, url: baseUrl, found, total: found.length });
 });
 
-// Web Scraper
 app.post('/tools/webscraper', verifyToken, async (req, res) => {
   const { url } = req.body;
   const username = req.user.username;
   if (!url) return res.status(400).json({ error: 'URL wajib diisi' });
   const hasAccess = await checkToolAccess(username, 'webscraper');
-  if (!hasAccess) return res.status(403).json({ error: 'Akses ditolak'
+  if (!hasAccess) return res.status(403).json({ error: 'Akses ditolak' });
+  try {
+    const response = await axios.get(url, { timeout: 10000 });
+    const html = response.data;
+    const title = html.match(/<title>(.*?)<\/title>/i)?.[1] || 'Tidak ditemukan';
+    const desc = html.match(/<meta\s+name="description"\s+content="(.*?)"/i)?.[1] || 'Tidak ditemukan';
+    const links = html.match(/<a\s+href="(.*?)"/gi)?.map(l => l.match(/href="(.*?)"/)[1]) || [];
+    await updateUserStats(username, 'TOOL', url, `Web Scraper: ${title}`);
+    res.json({ success: true, url, title, description: desc, totalLinks: links.length, sampleLinks: links.slice(0,20) });
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.get('/tools/global-stats', verifyToken, async (req, res) => {
+  const username = req.user.username;
+  const { data: user, error } = await supabase.from('users').select('role').eq('username', username).single();
+  if (error || !user) return res.status(401).json({ error: 'User tidak ditemukan' });
+  if (!['master', 'owner', 'admin'].includes(user.role)) {
+    return res.status(403).json({ error: 'Akses ditolak. Hanya admin ke atas.' });
+  }
+  try {
+    const { data: users } = await supabase.from('users').select('username');
+    let totalBug = 0, totalTool = 0;
+    for (const u of users) {
+      const { data: stats } = await supabase.from('users_stats').select('bug_count, tool_count').eq('username', u.username).single();
+      if (stats) {
+        totalBug += (stats.bug_count || 0);
+        totalTool += (stats.tool_count || 0);
+      }
+    }
+    res.json({ success: true, totalUsers: users.length, totalBug, totalTool });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
+// ADMIN ENDPOINTS
+// ============================================================
+async function checkMaster(req, res, next) {
+  const username = req.user.username;
+  const { data: user, error } = await supabase.from('users').select('role').eq('username', username).single();
+  if (error || !user) return res.status(401).json({ error: 'User not found' });
+  if (user.role !== 'master') return res.status(403).json({ error: 'Forbidden: only master' });
+  next();
+}
+
+app.get('/users', verifyToken, checkMaster, async (req, res) => {
+  const { data: users, error } = await supabase.from('users').select('username, role, active, permanent, expired, created_by').order('username');
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ success: true, users });
+});
+
+app.post('/add-user', verifyToken, checkMaster, async (req, res) => {
+  const { username, password, role = 'member', expired = null } = req.body;
+  if (!username || !password) return res.status(400).json({ error: 'username dan password wajib' });
+  const { data: existing } = await supabase.from('users').select('username').eq('username', username).single();
+  if (existing) return res.status(400).json({ error: 'Username sudah ada' });
+  const salt = await bcrypt.genSalt(10);
+  const hash = await bcrypt.hash(password, salt);
+  const newUser = {
+    username,
+    password: hash,
+    role,
+    active: true,
+    permanent: !expired,
+    expired: expired || null,
+    created_by: req.user.username
+  };
+  const { data, error } = await supabase.from('users').insert(newUser).select();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ success: true, user: data[0] });
+});
+
+app.put('/edit-user/:username', verifyToken, checkMaster, async (req, res) => {
+  const target = req.params.username;
+  const { role, active, permanent, expired } = req.body;
+  const updateData = {};
+  if (role !== undefined) updateData.role = role;
+  if (active !== undefined) updateData.active = active;
+  if (permanent !== undefined) updateData.permanent = permanent;
+  if (expired !== undefined) updateData.expired = expired;
+  const { data, error } = await supabase.from('users').update(updateData).eq('username', target).select();
+  if (error || !data || data.length===0) return res.status(404).json({ error: 'User tidak ditemukan' });
+  res.json({ success: true, user: data[0] });
+});
+
+app.delete('/delete-user/:username', verifyToken, checkMaster, async (req, res) => {
+  const target = req.params.username;
+  if (target === req.user.username) return res.status(400).json({ error: 'Tidak bisa hapus diri sendiri' });
+  const { error } = await supabase.from('users').delete().eq('username', target);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ success: true, message: `User ${target} dihapus` });
+});
+
+// ============================================================
+// JALANKAN SERVER
+// ============================================================
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`[SERVER] MARZ-X Backend v3.2.1 running on port ${PORT}`);
+  console.log(`[NODE] ${process.version}`);
+  console.log(`[AUTH] JWT + bcryptjs active`);
+});
