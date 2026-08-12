@@ -1,6 +1,6 @@
 {
   "name": "marzx-backend",
-  "version": "3.1.2",
+  "version": "3.1.3",
   "description": "MARZ-X Backend – WhatsApp Bug + DDoS + Tools + JWT Auth",
   "main": "server.js",
   "scripts": {
