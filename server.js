@@ -1,7 +1,9 @@
 // ============================================================
 // MARZ-X BACKEND v3.1.1 – FINAL FIXED BY ZEROV1
 // ============================================================
-require('dotenv').config();
+if (process.env.NODE_ENV !== 'production') {
+  require('dotenv').config();
+}
 const express = require('express');
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const QRCode = require('qrcode');
@@ -15,7 +17,7 @@ const fs = require('fs');
 const cors = require('cors');
 const WebSocket = require('ws');
 const jwt = require('jsonwebtoken');
-const bcrypt = require('bcrypt');
+const bcrypt = require('bcryptjs');
 
 const app = express();
 app.use(express.json());
